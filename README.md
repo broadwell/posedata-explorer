@@ -4,12 +4,12 @@ Notebooks and maybe scripts and other utilities for working with pose data extra
 
 ## Install and run
 
-Assuming you have git, [pipenv](https://pipenv.pypa.io/en/latest/), [Jupyter Notebook](https://jupyter.org/install) and an up-to-date version of Python installed, just clone this repo into a folder and, from within that folder, run
+Assuming you have git, [pipenv](https://pipenv.pypa.io/en/latest/) and Python 3.10.x installed, just clone this repo into a folder and, from within that folder, run
 
-> $ pipenv install
-
-to set up the virtual environment, and
-
-> $ pipenv run jupyter notebook video_posedata_explorer.ipynb
+> $ ./start_notebook_server.sh
 
 to launch the notebook. All other relevant documentation is contained within the notebook.
+
+## Development
+
+Before committing any changes, run `git config --local include.path ../.gitconfig` to update the local git config for this repo.
