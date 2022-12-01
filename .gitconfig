@@ -1,0 +1,8 @@
+# Must be installed locally with `git config --local include.path ../.gitconfig`
+[filter "clean-notebook"]
+clean = "jq --indent 1 \
+        '(.cells[] | select(has(\"outputs\")) | .outputs) = []  \
+        | (.cells[] | select(has(\"execution_count\")) | .execution_count) = null  \
+        | .metadata = {} \
+        | .cells[].metadata = {} \
+        '"
