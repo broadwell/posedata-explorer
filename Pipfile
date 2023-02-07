@@ -9,13 +9,14 @@ ipycanvas = "==0.13.1"
 ipyfilechooser = "==0.6.0"
 ipython = "==8.7.0"
 ipywidgets = "==7.7.2"
+jupyter = "*"
+jupyterlab = "*"
 jsonlines = "==3.1.0"
 matplotlib = "==3.6.2"
 numpy = "==1.21.5"
 opencv-python = "==4.5.5.64"
 pillow = "==9.3.0"
 scipy = "==1.8.0"
-jupyter = "*"
 
 [dev-packages]
 
