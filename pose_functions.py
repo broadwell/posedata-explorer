@@ -418,13 +418,25 @@ def add_pose_to_drawing(pose_prediction, drawing, seqno=None, show_bbox=False):
         int((bbox[1] + bbox[3]) * UPSCALE),
     )
 
+    pose_outline_color = "blue"
+    if seqno is not None:
+        pose_label = str(seqno + 1)
+
+    if "tracking_id" in pose_prediction:
+        pose_outline_color = "purple"
+        pose_label = str(pose_prediction["tracking_id"])
+
     if show_bbox:
         shape = [upper_left, lower_right]
-        drawing.rectangle(shape, outline="blue", width=1 * UPSCALE)
+        drawing.rectangle(shape, outline=pose_outline_color, width=1 * UPSCALE)
 
     if seqno is not None:
         drawing.text(
-            upper_left, str(seqno + 1), font=label_font, align="right", fill="blue"
+            upper_left,
+            pose_label,
+            font=label_font,
+            align="right",
+            fill=pose_outline_color,
         )
 
     return drawing
