@@ -477,7 +477,7 @@ def draw_normalized_and_unflattened_pose(pose_prediction, armature_prevalences=[
     return bg_img
 
 
-def draw_frame(frame, bg_img=None):
+def draw_frame(frame, video_width, video_height, bg_img=None):
     """Draw all detected poses in the specified frame, superimposing them on the frame image, if provided."""
     pixels_to_poses = {}
     # The only way to get smooth(er) lines in the pose armatures via PIL ImageDraw is to upscale the entire
