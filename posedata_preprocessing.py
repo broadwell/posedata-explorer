@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta
+from IPython.display import display
+from ipywidgets import IntProgress
 import jsonlines
 import math
 import numpy as np
@@ -90,19 +92,27 @@ class TrackerArgs:
         self.mot20 = False
 
 
-def track_poses(pose_data, video_fps, video_width, video_height):
+def track_poses(pose_data, video_fps, video_width, video_height, show_progress=False):
 
     args = TrackerArgs()
     tracker = BYTETracker(args, frame_rate=video_fps)
 
     tracking_results = []
     tracking_ids = set()
-    for frame in pose_data:
+
+    print("Tracking detected figures in pose data")
+
+    if show_progress:
+        tracking_bar = IntProgress(min=0, max=len(pose_data))
+        display(tracking_bar)
+
+    for f, frame in enumerate(pose_data):
+        if show_progress and (f % 100 == 0):
+            tracking_bar.value = f
+
         frameno = (
             frame["frame"] - 1
         )  # This should always  bethe 0-based index of the frame
-        if frameno % 1000 == 0:
-            print("Tracking poses in frame", frameno, "out of", len(pose_data))
         detections = []
         for prediction in frame["predictions"]:
             # Need to convert prediction["bbox"] to the format BYTETracker expects
@@ -150,6 +160,9 @@ def track_poses(pose_data, video_fps, video_width, video_height):
                         ]
                     )
 
+    if show_progress:
+        tracking_bar.bar_style = "success"
+
     tracking_matches = 0
 
     min_tracking_id = min(tracking_ids)
@@ -157,16 +170,18 @@ def track_poses(pose_data, video_fps, video_width, video_height):
     # Merge tracking results with pose data
     tracked_pose_data = pose_data.copy()
 
-    for res in tracking_results:
+    print("Merging tracking data with existing pose data")
+
+    if show_progress:
+        merging_bar = IntProgress(min=0, max=len(tracking_results))
+        display(merging_bar)
+
+    for r, res in enumerate(tracking_results):
+        if show_progress and (r % 100 == 0):
+            merging_bar.value = r
+
         res_bbox = [res[2], res[3], res[4], res[5]]
         frameno = res[0]
-        if frameno % 1000 == 0:
-            print(
-                "Merging tracking data in frame",
-                frameno,
-                "out of",
-                len(tracked_pose_data),
-            )
         matched_predictions = []
         # The bbox coordinates returned by the ByteTracker usually deviate by a small
         # amount from those it receives as input. It's not clear why, but this complicates
@@ -194,8 +209,11 @@ def track_poses(pose_data, video_fps, video_width, video_height):
             )
             tracking_matches += 1
 
+    if show_progress:
+        merging_bar.bar_style = "success"
+
     print("Tracked", tracking_matches, "poses across all frames")
-    print("Total entities tracked", len(tracking_ids))
+    print("Total entities tracked:", len(tracking_ids))
 
     return tracked_pose_data
 
