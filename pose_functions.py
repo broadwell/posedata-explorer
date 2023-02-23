@@ -275,6 +275,7 @@ def image_from_video_frame(video_file, frameno):
     rgb_bg = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img = cv2.cvtColor(rgb_bg, cv2.COLOR_RGB2RGBA)
     image = np.asarray(img)
+    cap.release()
     return image
 
 
