@@ -4,7 +4,7 @@ import cv2
 import matplotlib
 import numpy as np
 from PIL import Image, ImageColor, ImageDraw, ImageFont
-from scipy.spatial.distance import cosine
+from scipy.spatial.distance import cosine, correlation
 
 """All constants are defined up here, though in the future they could be moved into the appropriate sub-modules."""
 
@@ -193,8 +193,20 @@ def compare_poses_cosine(p1, p2):
     Calculate the similarity of the 'keypoint' portions of two Open PifPaf pose predictions
     by computing their cosine distance and subtracting this from 1 (so 1=identical).
     """
-    unflattened_p1 = unflatten_pose_data(p1)
     return 1 - cosine(
+        np.array(unflatten_pose_data(p1))[:, :2].flatten(),
+        np.array(unflatten_pose_data(p2))[:, :2].flatten(),
+    )
+
+
+def compare_poses_correlation(p1, p2):
+    """
+    Calculate the similarity of the 'keypoint' portions of two Open PifPaf pose predictions
+    by computing their Euclidean distance and subtracting this from 1 (so 1=identical).
+    Note that this is only likely to generate reliable results if run on coordinates that
+    have been normalized on at least one axis.
+    """
+    return 1 - correlation(
         np.array(unflatten_pose_data(p1))[:, :2].flatten(),
         np.array(unflatten_pose_data(p2))[:, :2].flatten(),
     )
@@ -359,7 +371,6 @@ def draw_armatures(pose_coords, drawing, line_prevalences=[]):
     to the drawing, or it can be added/superimposed later (or left blank).
     """
     for i, seg in enumerate(OPP_COCO_SKELETON):
-
         line_color = ImageColor.getrgb(OPP_COCO_COLORS[i])
 
         # If line_prevalences are provided, we know the pose coords don't contain confidence
@@ -504,7 +515,6 @@ def draw_frame(frame, video_width, video_height, bg_img=None):
     drawing = ImageDraw.Draw(bg_img)
 
     for i, pose_prediction in enumerate(frame["predictions"]):
-
         drawing = add_pose_to_drawing(pose_prediction, drawing, i, show_bbox=True)
 
     bg_img = bg_img.resize(
