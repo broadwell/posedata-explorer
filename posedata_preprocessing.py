@@ -9,7 +9,6 @@ from yolox.tracker.byte_tracker import BYTETracker
 
 
 def preprocess_pose_json(pose_file, video_fps):
-
     pose_json = jsonlines.open(pose_file)
 
     pose_data = []
@@ -25,7 +24,6 @@ def preprocess_pose_json(pose_file, video_fps):
     }
 
     for frame in pose_json:
-
         pose_data.append(frame)
 
         # Frame output is numbered from 1 in the JSON
@@ -52,7 +50,6 @@ def preprocess_pose_json(pose_file, video_fps):
         avg_coords_per_pose = 0
 
         for pose in frame["predictions"]:
-
             pose_scores.append(pose["score"])
             pose_coords = 0
             for i in range(0, len(pose["keypoints"]), 3):
@@ -93,7 +90,6 @@ class TrackerArgs:
 
 
 def track_poses(pose_data, video_fps, video_width, video_height, show_progress=False):
-
     args = TrackerArgs()
     tracker = BYTETracker(args, frame_rate=video_fps)
 
@@ -219,7 +215,6 @@ def track_poses(pose_data, video_fps, video_width, video_height, show_progress=F
 
 
 def count_tracked_poses(tracked_pose_data):
-
     tracked_poses_counts = []
 
     for frame in tracked_pose_data:
