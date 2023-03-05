@@ -121,14 +121,39 @@ def imagehash_run(video_file):
     return frame_activity.tolist()
 
 
-# Using TrasNetV2 (https://github.com/soCzech/TransNetV2/tree/master/inference)
-# NOTE: Has not yet run to completion on Mac M1, consider using something else,
-# like Yahoo's Hecate (though it's C++ only)
+# Using TransNetV2 (https://github.com/soCzech/TransNetV2/tree/master/inference)
+# XXX Consider using something else, like Yahoo's Hecate (though it's C++ only)
 from transnetv2.transnetv2 import TransNetV2
 
 
-def transnet_run(video_file):
+def transnet_run(video_fn):
     model = TransNetV2()
-    video_frames, single_frame_predictions, all_frame_predictions = model.predict_video(
-        video_file
+    try:
+        import ffmpeg
+    except ModuleNotFoundError:
+        raise ModuleNotFoundError(
+            "For `predict_video` function `ffmpeg` needs to be installed in order to extract "
+            "individual frames from video file. Install `ffmpeg` command line tool and then "
+            "install python wrapper by `pip install ffmpeg-python`."
+        )
+
+    # XXX The reference implementation at
+    # https://github.com/soCzech/TransNetV2/blob/master/inference/transnetv2.py
+    # often produces differing frame counts from what OpenCV reads from the video,
+    # unless the vsync="passthrough" option is added.
+    #
+
+    video_stream, err = (
+        ffmpeg.input(video_fn)
+        .output(
+            "pipe:", format="rawvideo", pix_fmt="rgb24", s="48x27", vsync="passthrough"
+        )
+        .run(capture_stdout=True, capture_stderr=True)
     )
+
+    video = np.frombuffer(video_stream, np.uint8).reshape([-1, 27, 48, 3])
+    # This returns two lists of scene boundary predictions for each frame, based
+    # on individual frame thresholding and a full-video model. The reference
+    # implementation only considers the former when setting scene boundaries,
+    # using a default threshold of 0.5.
+    return model.predict_frames(video)
