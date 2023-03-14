@@ -56,6 +56,8 @@ OPP_COCO_COLORS = [
 
 UPSCALE = 5  # See draw_frame()
 
+COORDS_PER_POSE = 17
+
 # Default dimensions of the output visualizations ("figure" here simply means a graphic)
 FIGURE_WIDTH = 950
 FIGURE_HEIGHT = 500
@@ -80,8 +82,21 @@ def unflatten_pose_data(prediction):
     """
     Convert an Open PifPaf pose prediction (a 1D 51-element list) into a 17-element
     list (not a NumPy array) of [x_coord, y_coord, confidence] triples.
+    OR, if the input has already been flattened and normalized, in which case it's
+    a 1D 34-element list in which the confidence values have been removed and NaNs
+    have been provided as x,y pairs for low- or no-confidence coordinates,
+    fill in the confidence values with 0 if x or y is NaN and 1 otherwise.
     """
-    return np.array_split(prediction["keypoints"], len(prediction["keypoints"]) / 3)
+    if len(prediction["keypoints"]) == COORDS_PER_POSE * 3:
+        return np.array_split(prediction["keypoints"], len(prediction["keypoints"]) / 3)
+    elif len(prediction["keypoints"]) == COORDS_PER_POSE * 2:
+        out_array = []
+        for coords in np.array_split(prediction["keypoints"], COORDS_PER_POSE):
+            if np.isnan(coords[0]) or np.isnan(coords[1]):
+                out_array.append([coords[0], coords[1], 0])
+            else:
+                out_array.append([coords[0], coords[1], 1])
+        return out_array
 
 
 def extract_trustworthy_coords(prediction):
@@ -104,6 +119,12 @@ def extract_trustworthy_coords(prediction):
 
 def get_pose_extent(prediction):
     """Get the min and max x and y coordinates of an Open PifPaf pose prediction"""
+    # if "bbox" in prediction:
+    #     # bbox format for PifPaf is x0, y0, width, height
+    #     bbox = prediction["bbox"]
+    #     extent = [bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3]]
+    #     return extent
+    
     pose_coords = unflatten_pose_data(prediction)
     min_x = np.NaN
     min_y = np.NaN
@@ -356,7 +377,7 @@ def extract_pose_background(pose_pred, video_file, pose_frameno):
     return pose_base_image
 
 
-def draw_armatures(pose_coords, drawing, line_prevalences=[]):
+def draw_armatures(pose_coords, drawing, line_prevalences=[], x_shift=0, y_shift=0):
     """
     Draw, colorize and adjust the transparency of armature connections in the pose_coords
     data from an Open PifPaf pose prediction. This function can receive pose coordinates
@@ -391,12 +412,12 @@ def draw_armatures(pose_coords, drawing, line_prevalences=[]):
 
         shape = [
             (
-                int(pose_coords[seg[0] - 1][0] * UPSCALE),
-                int(pose_coords[seg[0] - 1][1] * UPSCALE),
+                round((pose_coords[seg[0] - 1][0] - x_shift) * UPSCALE),
+                round((pose_coords[seg[0] - 1][1] - y_shift) * UPSCALE),
             ),
             (
-                int(pose_coords[seg[1] - 1][0] * UPSCALE),
-                int(pose_coords[seg[1] - 1][1]) * UPSCALE,
+                round((pose_coords[seg[1] - 1][0] - x_shift) * UPSCALE),
+                round((pose_coords[seg[1] - 1][1] - y_shift) * UPSCALE),
             ),
         ]
         drawing.line(shape, fill=line_color, width=2 * UPSCALE)
@@ -503,7 +524,6 @@ def draw_normalized_and_unflattened_pose(pose_prediction, armature_prevalences=[
 
 def draw_frame(frame, video_width, video_height, bg_img=None):
     """Draw all detected poses in the specified frame, superimposing them on the frame image, if provided."""
-    pixels_to_poses = {}
     # The only way to get smooth(er) lines in the pose armatures via PIL ImageDraw is to upscale the entire
     # image by some factor, draw the lines, then downscale back to the original resolution while applying
     # Lanczos resampling, because ImageDraw doesn't do any native anti-aliasing.
@@ -522,6 +542,54 @@ def draw_frame(frame, video_width, video_height, bg_img=None):
     )
 
     return bg_img
+
+
+def draw_normalized_pose_on_canvas(pose_prediction, canvas):
+    pose_coords = np.array_split(pose_prediction, len(pose_prediction) / 2)
+
+    for i, seg in enumerate(OPP_COCO_SKELETON):
+        if (
+            np.isnan(pose_coords[seg[0] - 1][0])
+            or np.isnan(pose_coords[seg[0] - 1][1])
+            or np.isnan(pose_coords[seg[1] - 1][0])
+            or np.isnan(pose_coords[seg[1] - 1][1])
+        ):
+            continue
+
+        canvas.stroke_style = OPP_COCO_COLORS[i]
+        canvas.line_width = 2
+
+        canvas.stroke_line(
+            pose_coords[seg[0] - 1][0],
+            pose_coords[seg[0] - 1][1],
+            pose_coords[seg[1] - 1][0],
+            pose_coords[seg[1] - 1][1],
+        )
+
+
+def draw_pose_on_canvas(pose_prediction, canvas, x_shift=0, y_shift=0):
+    pose_coords = np.array_split(
+        pose_prediction["keypoints"], len(pose_prediction["keypoints"]) / 3
+    )
+
+    for i, seg in enumerate(OPP_COCO_SKELETON):
+        if pose_coords[seg[0] - 1][2] == 0 or pose_coords[seg[1] - 1][2] == 0:
+            continue
+
+        canvas.stroke_style = OPP_COCO_COLORS[i]
+        canvas.line_width = 2
+
+        canvas.stroke_line(
+            pose_coords[seg[0] - 1][0] - x_shift,
+            pose_coords[seg[0] - 1][1] - y_shift,
+            pose_coords[seg[1] - 1][0] - x_shift,
+            pose_coords[seg[1] - 1][1] - y_shift,
+        )
+
+
+def draw_frame_on_canvas(frame, canvas):
+    for pose_prediction in frame["predictions"]:
+        draw_pose_on_canvas(pose_prediction, canvas)
 
 
 def get_armature_prevalences(cluster_poses):

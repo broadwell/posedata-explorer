@@ -1,15 +1,24 @@
+import cv2
 from datetime import datetime, timedelta
 from IPython.display import display
 from ipywidgets import IntProgress
+import json
 import jsonlines
 import math
 import numpy as np
+import os
 
 from yolox.tracker.byte_tracker import BYTETracker
 
 
-def preprocess_pose_json(pose_file, video_fps):
+def preprocess_pose_json(pose_file, video_file):
     pose_json = jsonlines.open(pose_file)
+
+    cap = cv2.VideoCapture(video_file)
+    video_fps = cap.get(cv2.CAP_PROP_FPS)
+    # video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    # video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
 
     pose_data = []
 
@@ -173,14 +182,15 @@ def track_poses(pose_data, video_fps, video_width, video_height, show_progress=F
         display(merging_bar)
 
     for r, res in enumerate(tracking_results):
-        if show_progress and (r % 100 == 0):
+        if show_progress and (r % 1000 == 0):
             merging_bar.value = r
 
         res_bbox = [res[2], res[3], res[4], res[5]]
         frameno = res[0]
         matched_predictions = []
         # The bbox coordinates returned by the ByteTracker usually deviate by a small
-        # amount from those it receives as input. It's not clear why, but this complicates
+        # amount from those it receives as input. Perhaps they're being smoothed/
+        # interpolated as part of the tracking process? in any case, this complicates
         # the matching process. Fortunately, the ByteTracker doesn't ever seem to modify
         # the pose confidence scores, so we match on those first, then if there's a tie,
         # we choose the bbox with the smallest Euclidean distance from the tracker's bbox.
@@ -203,6 +213,9 @@ def track_poses(pose_data, video_fps, video_width, video_height, show_progress=F
             tracked_pose_data[frameno]["predictions"][match_poseno]["tracking_id"] = (
                 res[1] - min_tracking_id + 1
             )
+            # ? Use ByteTrack's bbox instead of the original Open PifPaf bbox in the
+            # hopes that it will smooth over single-frame aberrations better
+            tracked_pose_data[frameno]["predictions"][match_poseno]["bbox"] = res_bbox
             tracking_matches += 1
 
     if show_progress:
