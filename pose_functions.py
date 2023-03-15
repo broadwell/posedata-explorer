@@ -1,10 +1,12 @@
 import os
 
 import cv2
+from ipycanvas import Canvas, hold_canvas
 import matplotlib
 import numpy as np
-from PIL import Image, ImageColor, ImageDraw, ImageFont
+from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageEnhance
 from scipy.spatial.distance import cosine, correlation
+
 
 """All constants are defined up here, though in the future they could be moved into the appropriate sub-modules."""
 
@@ -238,6 +240,8 @@ def compute_joint_angles(prediction):
     Build an additional/alternative feature set for an Open PifPaf pose prediction, composed
     of the angles, measured in radians, of several joints/articulation points on the body (see
     list in code comments below).
+    Also compute a rotation value for each angle -- how far it would need to be rotated until
+    one armature segment is at a right angle to the vertical (?) plane of the image.
     """
     pose_coords = unflatten_pose_data(prediction)
 
@@ -245,16 +249,20 @@ def compute_joint_angles(prediction):
 
     # Joints to use:
     joint_angle_points = [
-        [3, 5, 11],  # Left ear - left shoulder - left hip
-        [4, 6, 12],  # Right ear - right shoulder - right hip
-        [11, 5, 7],  # Left hip - left shoulder - left elbow
-        [12, 6, 8],  # Right hip - right shoulder - right elbow
-        [5, 7, 9],  # Left shoulder - left elbow - left wrist
-        [6, 8, 10],  # Right shoulder - right elbow - right wrist
+        [3, 5, 6],    # Left ear - left shoulder - right shoulder
+        [4, 6, 5],    # Right ear - right shoulder - left shoulder
+        [3, 5, 11],   # Left ear - left shoulder - left hip
+        [4, 6, 12],   # Right ear - right shoulder - right hip
+        [11, 5, 7],   # Left hip - left shoulder - left elbow
+        [12, 6, 8],   # Right hip - right shoulder - right elbow
+        [5, 7, 9],    # Left shoulder - left elbow - left wrist
+        [6, 8, 10],   # Right shoulder - right elbow - right wrist
         [5, 11, 13],  # Left shoulder - left hip - left knee
         [6, 12, 14],  # Right shoulder - right hip - right knee
-        [11, 13, 15],  # Left hip - left knee - left ankle
-        [12, 14, 16],  # Right hip - right knee - right ankle
+        [13, 11, 12], # Left knee - left hip - right hip
+        [14, 12, 11], # Right knee - right hip - left hip
+        [11, 13, 15], # Left hip - left knee - left ankle
+        [12, 14, 16], # Right hip - right knee - right ankle
     ]
 
     for angle_points in joint_angle_points:
@@ -264,7 +272,7 @@ def compute_joint_angles(prediction):
             or pose_coords[angle_points[1]][2] == 0
             or pose_coords[angle_points[2]][2] == 0
         ):
-            joint_angles.append(np.NaN)
+            joint_angles.extend([np.NaN, np.NaN])
         else:
             ba = np.array(
                 [pose_coords[angle_points[0]][0], pose_coords[angle_points[0]][1]]
@@ -276,8 +284,19 @@ def compute_joint_angles(prediction):
             ) - np.array(
                 [pose_coords[angle_points[1]][0], pose_coords[angle_points[1]][1]]
             )
+            
             cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
-            joint_angles.append(np.arccos(cosine_angle))
+            joint_angles.append(np.arccos(cosine_angle)) # This is the angle
+            
+            # The rotation is just the angle between the first segment and a segment
+            # drawn straight upwards from the midpoint of the angle.
+            bd = np.array([pose_coords[angle_points[1]][0], pose_coords[angle_points[1]][1]-1]
+            ) - np.array(
+               [pose_coords[angle_points[1]][0], pose_coords[angle_points[1]][1]]
+            )
+            
+            rotation = np.arctan2(ba[0]*bd[1] - ba[1]*bd[0], ba[0]*bd[0] + ba[1]*bd[1])
+            joint_angles.append(rotation)
 
     return joint_angles
 
@@ -608,3 +627,119 @@ def get_armature_prevalences(cluster_poses):
             ):
                 armature_appearances[i] += 1
     return [segcount / len(cluster_poses) for segcount in armature_appearances]
+
+
+""" Pose track visualization functions """
+
+
+def snapshot_pose_track(tracking_id):
+    # Could just plot these on the same plot via pyplot, but this looks a bit better
+    images_array = []
+
+    for t, track_frame in enumerate(pose_tracks[tracking_id]):
+        pose_pil_img = draw_normalized_and_unflattened_pose(unflatten_pose_data(normalized_pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]]))
+        images_array.append(np.array(pose_pil_img))
+
+    images_array = np.array(images_array, dtype=float)
+
+    avg_pose_img = np.mean(images_array, axis=0).astype(np.uint8)
+
+    avg_pil_img = Image.fromarray(avg_pose_img)
+    enhancer = ImageEnhance.Contrast(avg_pil_img)
+    enhanced_pil_img = enhancer.enhance(2.0)
+
+    plt.imshow(enhanced_pil_img)
+
+    
+def animate_pose_track(tracking_id):
+
+    canvas = Canvas(width=POSE_MAX_DIM, height=POSE_MAX_DIM, sync_image_data=True)
+
+    display(canvas)
+
+    with hold_canvas():
+        for t, track_frame in enumerate(pose_tracks[tracking_id]):
+
+            canvas.clear()
+            draw_normalized_pose_on_canvas(normalized_pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]], canvas)
+            if t+1 < len(pose_tracks[tracking_id]):
+                sleep_len = (pose_tracks[tracking_id][t+1]["frameno"] - pose_tracks[tracking_id][t]["frameno"]) * 1000 / video_fps
+                canvas.sleep(sleep_len)
+
+                
+def get_track_boundaries(tracking_id):                
+    track_boundaries = []
+    for t, track_frame in enumerate(pose_tracks[tracking_id]):
+        track_boundaries.append(get_pose_extent(pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]]))
+        
+    return [np.min(np.array(track_boundaries)[:,0]),
+            np.min(np.array(track_boundaries)[:,1]),
+            np.max(np.array(track_boundaries)[:,2]),
+            np.max(np.array(track_boundaries)[:,3])
+           ]
+
+
+def animate_pose_track_noclipping_bg(tracking_id):
+    def draw_frame_bg_on_canvas(canvas, frameno):
+        pose_frame_image = image_from_video_frame(video_file, frameno)
+        pose_base_image = pose_frame_image[round(min_y):round(max_y), round(min_x):round(max_x)]
+        canvas.put_image_data(pose_base_image, 0, 0)
+        
+    min_x, min_y, max_x, max_y = get_track_boundaries(tracking_id)
+    sleep_len = 1000 / video_fps
+        
+    canvas = Canvas(width=round(max_x - min_x), height=round(max_y - min_y), sync_image_data=True) 
+    display(canvas)
+        
+    with hold_canvas():
+        draw_track_index = 0
+        for frameno in range(pose_tracks[tracking_id][0]["frameno"], pose_tracks[tracking_id][-1]["frameno"]+1):
+            canvas.clear()
+            draw_frame_bg_on_canvas(canvas, frameno)
+            
+            if pose_tracks[tracking_id][draw_track_index]["frameno"] == frameno:
+                poseno = pose_tracks[tracking_id][draw_track_index]["poseno"]
+                draw_pose_on_canvas(pose_data[frameno]["predictions"][poseno], canvas, x_shift=min_x, y_shift=min_y)
+                draw_track_index += 1
+
+            canvas.sleep(sleep_len)
+        
+                
+def animate_pose_track_noclipping(tracking_id):
+    min_x, min_y, max_x, max_y = get_track_boundaries(tracking_id)
+        
+    canvas = Canvas(width=round(max_x - min_x), height=round(max_y - min_y), sync_image_data=True)
+        
+    display(canvas)
+    
+    with hold_canvas():
+        for t, track_frame in enumerate(pose_tracks[tracking_id]):
+            canvas.clear()
+  
+            draw_pose_on_canvas(pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]], canvas, x_shift=min_x, y_shift=min_y)
+            if t+1 < len(pose_tracks[tracking_id]):
+                
+                this_pose_frameno = pose_tracks[tracking_id][t]["frameno"]
+                next_pose_frameno = pose_tracks[tracking_id][t+1]["frameno"]
+                
+                sleep_len = (next_pose_frameno - this_pose_frameno) * 1000 / video_fps
+                canvas.sleep(sleep_len)
+
+                
+def snapshot_pose_track_noclipping(tracking_id):
+    # Could just plot these on the same plot via pyplot, but this looks a bit better
+    min_x, min_y, max_x, max_y = get_track_boundaries(tracking_id)
+    
+    bg_img = Image.new("RGBA", (round(max_x - min_x) * UPSCALE, round(max_y - min_y) * UPSCALE))
+    drawing = ImageDraw.Draw(bg_img)
+
+    for t, track_frame in enumerate(pose_tracks[tracking_id]):
+        pose_keypoints = pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]]["keypoints"]
+        pose_coords = np.array_split(pose_keypoints, len(pose_keypoints) / 3)
+        drawing = draw_armatures(pose_coords, drawing, x_shift=min_x, y_shift=min_y)
+        
+    bg_img = bg_img.resize(
+        (round(max_x - min_x), round(max_y - min_y)), resample=Image.Resampling.LANCZOS
+    )
+    
+    plt.imshow(bg_img)
