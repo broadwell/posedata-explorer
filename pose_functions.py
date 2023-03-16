@@ -3,6 +3,7 @@ import os
 import cv2
 from ipycanvas import Canvas, hold_canvas
 import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageEnhance
 from scipy.spatial.distance import cosine, correlation
@@ -211,15 +212,28 @@ def shift_normalize_rescale_pose_coords(prediction):
     return rescale_pose_coords(shift_pose_to_origin(prediction))
 
 
+def compare_poses_cosine_flattened(p1, p2):
+    """
+    The actual comparison is in this helper function because often the pose data has already
+    been flattened by the time the comparison is run.
+    """
+    return 1 - cosine(p1, p2)
+
+
 def compare_poses_cosine(p1, p2):
     """
     Calculate the similarity of the 'keypoint' portions of two Open PifPaf pose predictions
     by computing their cosine distance and subtracting this from 1 (so 1=identical).
     """
-    return 1 - cosine(
-        np.array(unflatten_pose_data(p1))[:, :2].flatten(),
-        np.array(unflatten_pose_data(p2))[:, :2].flatten(),
-    )
+    return compare_poses_cosine_flattened(np.array(unflatten_pose_data(p1))[:, :2].flatten(), np.array(unflatten_pose_data(p2))[:, :2].flatten())
+
+
+def compare_poses_correlation_flattened(p1, p2):
+    """
+    The actual comparison is in this helper function because often the pose data has already
+    been flattened by the time the comparison is run.
+    """
+    return 1 - correlation(p1, p2)
 
 
 def compare_poses_correlation(p1, p2):
@@ -229,10 +243,7 @@ def compare_poses_correlation(p1, p2):
     Note that this is only likely to generate reliable results if run on coordinates that
     have been normalized on at least one axis.
     """
-    return 1 - correlation(
-        np.array(unflatten_pose_data(p1))[:, :2].flatten(),
-        np.array(unflatten_pose_data(p2))[:, :2].flatten(),
-    )
+    return compare_poses_correlation_flattened(np.array(unflatten_pose_data(p1))[:, :2].flatten(), np.array(unflatten_pose_data(p2))[:, :2].flatten())
 
 
 def compute_joint_angles(prediction):
@@ -564,6 +575,11 @@ def draw_frame(frame, video_width, video_height, bg_img=None):
 
 
 def draw_normalized_pose_on_canvas(pose_prediction, canvas):
+    """
+    Draw the specified pose prediction on an ipycanvas. Normalized poses
+    do not have confidence values for each coordinate pair; rather if the
+    pair consists of NaNs, that armature point should be skipped.
+    """
     pose_coords = np.array_split(pose_prediction, len(pose_prediction) / 2)
 
     for i, seg in enumerate(OPP_COCO_SKELETON):
@@ -587,6 +603,10 @@ def draw_normalized_pose_on_canvas(pose_prediction, canvas):
 
 
 def draw_pose_on_canvas(pose_prediction, canvas, x_shift=0, y_shift=0):
+    """
+    Draw the specified pose prediction on an ipycanvas. If the confidence
+    value for a given coordinate pair is 0, skip that armature point.
+    """
     pose_coords = np.array_split(
         pose_prediction["keypoints"], len(pose_prediction["keypoints"]) / 3
     )
@@ -607,6 +627,7 @@ def draw_pose_on_canvas(pose_prediction, canvas, x_shift=0, y_shift=0):
 
 
 def draw_frame_on_canvas(frame, canvas):
+    """Draw all the poses in the specified frame on an ipycanvas"""
     for pose_prediction in frame["predictions"]:
         draw_pose_on_canvas(pose_prediction, canvas)
 
@@ -629,10 +650,16 @@ def get_armature_prevalences(cluster_poses):
     return [segcount / len(cluster_poses) for segcount in armature_appearances]
 
 
-""" Pose track visualization functions """
+""" Pose tracking visualization functions """
 
 
 def snapshot_pose_track(tracking_id):
+    """
+    Superimpose all of the instances of a pose across a tracking sequence, allowing
+    for lateral movement -- so the size of the background is the combined extent of
+    all of the poses within the original frame.
+    """
+    
     # Could just plot these on the same plot via pyplot, but this looks a bit better
     images_array = []
 
@@ -652,7 +679,11 @@ def snapshot_pose_track(tracking_id):
 
     
 def animate_pose_track(tracking_id):
-
+    """
+    Iteratively draw all of the instances of a pose across a tracking sequence
+    at the time points when they appear, blanking the background between frames.
+    """
+    
     canvas = Canvas(width=POSE_MAX_DIM, height=POSE_MAX_DIM, sync_image_data=True)
 
     display(canvas)
@@ -667,7 +698,12 @@ def animate_pose_track(tracking_id):
                 canvas.sleep(sleep_len)
 
                 
-def get_track_boundaries(tracking_id):                
+def get_track_boundaries(tracking_id):
+    """
+    Determine the maximum extent of all pose instances in a tracking sequence,
+    relative to the original frame.
+    """
+    
     track_boundaries = []
     for t, track_frame in enumerate(pose_tracks[tracking_id]):
         track_boundaries.append(get_pose_extent(pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]]))
@@ -679,7 +715,39 @@ def get_track_boundaries(tracking_id):
            ]
 
 
+def snapshot_pose_track_noclipping(tracking_id):
+    """
+    Plot all of the instances of a pose across a tracking sequence in their original
+    positions in the video frame, so the dimensions of the background are the combined
+    extent of all of the poses, allowing for lateral movement.
+    """
+    
+    min_x, min_y, max_x, max_y = get_track_boundaries(tracking_id)
+    
+    bg_img = Image.new("RGBA", (round(max_x - min_x) * UPSCALE, round(max_y - min_y) * UPSCALE))
+    drawing = ImageDraw.Draw(bg_img)
+
+    for t, track_frame in enumerate(pose_tracks[tracking_id]):
+        pose_keypoints = pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]]["keypoints"]
+        pose_coords = np.array_split(pose_keypoints, len(pose_keypoints) / 3)
+        drawing = draw_armatures(pose_coords, drawing, x_shift=min_x, y_shift=min_y)
+        
+    bg_img = bg_img.resize(
+        (round(max_x - min_x), round(max_y - min_y)), resample=Image.Resampling.LANCZOS
+    )
+    
+    plt.imshow(bg_img)
+
+
 def animate_pose_track_noclipping_bg(tracking_id):
+    """
+    Iteratively draw all of the instances of a pose across a tracking sequence at the
+    time points when they appear, as well as all of the source video frame excerpts
+    that appear behind the lateral extent of the tracking sequence. When no pose was
+    detected in a particular frame, the background should still be updated, maintaining
+    the original frame rate of the video.
+    """
+    
     def draw_frame_bg_on_canvas(canvas, frameno):
         pose_frame_image = image_from_video_frame(video_file, frameno)
         pose_base_image = pose_frame_image[round(min_y):round(max_y), round(min_x):round(max_x)]
@@ -706,6 +774,12 @@ def animate_pose_track_noclipping_bg(tracking_id):
         
                 
 def animate_pose_track_noclipping(tracking_id):
+    """
+    Iteratively draw all of the instances of a pose across a tracking sequence at the
+    time points when they appear. Freeze the pose in place for the duration of the frames
+    during which no pose from the tracklet was detected, maintaining the original frame
+    rate of the video.
+    """
     min_x, min_y, max_x, max_y = get_track_boundaries(tracking_id)
         
     canvas = Canvas(width=round(max_x - min_x), height=round(max_y - min_y), sync_image_data=True)
@@ -724,22 +798,3 @@ def animate_pose_track_noclipping(tracking_id):
                 
                 sleep_len = (next_pose_frameno - this_pose_frameno) * 1000 / video_fps
                 canvas.sleep(sleep_len)
-
-                
-def snapshot_pose_track_noclipping(tracking_id):
-    # Could just plot these on the same plot via pyplot, but this looks a bit better
-    min_x, min_y, max_x, max_y = get_track_boundaries(tracking_id)
-    
-    bg_img = Image.new("RGBA", (round(max_x - min_x) * UPSCALE, round(max_y - min_y) * UPSCALE))
-    drawing = ImageDraw.Draw(bg_img)
-
-    for t, track_frame in enumerate(pose_tracks[tracking_id]):
-        pose_keypoints = pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]]["keypoints"]
-        pose_coords = np.array_split(pose_keypoints, len(pose_keypoints) / 3)
-        drawing = draw_armatures(pose_coords, drawing, x_shift=min_x, y_shift=min_y)
-        
-    bg_img = bg_img.resize(
-        (round(max_x - min_x), round(max_y - min_y)), resample=Image.Resampling.LANCZOS
-    )
-    
-    plt.imshow(bg_img)
