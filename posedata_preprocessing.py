@@ -11,7 +11,40 @@ import os
 from yolox.tracker.byte_tracker import BYTETracker
 
 
+def get_available_videos(data_folder):
+    """
+    Available videos will be limited to those with a .json and matching video (.mp4, .avi, etc)
+    file in a predefined directory (defaulting to the notebook's running directory).
+    NOTE that this is currently not being used, as the ipyfilechooser widget provides
+    sufficient filtering abilities.
+    """
+    available_json_files = list(data_folder.glob("*.json"))
+    available_video_files = (
+        p.resolve()
+        for p in Path(data_folder).glob("*")
+        if p.suffix in {".avi", ".mp4", ".mov", ".mkv", ".webm"}
+    )
+    available_json = [
+        json_file.stem.split(".")[0] for json_file in available_json_files
+    ]
+
+    available_videos = []
+
+    for video_name in available_video_files:
+        if video_name.stem.split(".")[0] in available_json:
+            available_videos.append(video_name.name)
+
+    return available_videos
+
+
 def preprocess_pose_json(pose_file, video_file):
+    """
+    Parse the JSON pose estimation output file and cross-reference it
+    with the actual source video file to build two data structures:
+    - pose_data: per-frame information about all pose armatures detected
+    - pose_series: numerous lists, all of total_frames length, providing
+      different data about each frame, for use in the Bokeh explorer UI
+    """
     pose_json = jsonlines.open(pose_file)
 
     cap = cv2.VideoCapture(video_file)
@@ -80,6 +113,8 @@ def preprocess_pose_json(pose_file, video_file):
 
     return [pose_data, pose_series]
 
+
+""" Pose tracking functions """
 
 # This can be run as a separate preprocessing/data ingest step,
 # as it only relies on the data in the Open PifPaf detection output
@@ -239,3 +274,36 @@ def count_tracked_poses(tracked_pose_data):
         tracked_poses_counts.append(tracked_poses_in_frame)
 
     return tracked_poses_counts
+
+
+def get_pose_tracking(video_file, pose_data, video_fps, video_width, video_height):
+    tracked_pose_file = f"{video_file}.tracked.openpifpaf.json"
+
+    if os.path.isfile(tracked_pose_file):
+        print("Loading previously computed pose tracking information")
+        tracked_pose_data = json.load(open(tracked_pose_file, "r"))
+    else:
+        tracked_pose_data = track_poses(
+            pose_data, video_fps, video_width, video_height, show_progress=True
+        )
+        print("Writing pose data with tracking info to", tracked_pose_file)
+        json.dump(tracked_pose_data, open(tracked_pose_file, "w"))
+
+    pose_tracks = {}
+
+    tracked_poses = count_tracked_poses(
+        tracked_pose_data,
+    )
+
+    for frameno, frame in enumerate(tracked_pose_data):
+        for poseno, pose_prediction in enumerate(frame["predictions"]):
+            if "tracking_id" in pose_prediction:
+                tracking_id = pose_prediction["tracking_id"]
+                if tracking_id in pose_tracks:
+                    pose_tracks[tracking_id].append(
+                        {"frameno": frameno, "poseno": poseno}
+                    )
+                else:
+                    pose_tracks[tracking_id] = [{"frameno": frameno, "poseno": poseno}]
+
+    return [tracked_pose_data, pose_tracks, tracked_poses]

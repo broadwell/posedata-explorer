@@ -1,12 +1,18 @@
-import os
-
 import cv2
 from ipycanvas import Canvas, hold_canvas
+from IPython.display import display
+from ipywidgets import IntProgress
 import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
+import os
+import pickle
 from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageEnhance
 from scipy.spatial.distance import cosine, correlation
+import warnings
+
+import faiss
 
 
 """All constants are defined up here, though in the future they could be moved into the appropriate sub-modules."""
@@ -127,7 +133,7 @@ def get_pose_extent(prediction):
     #     bbox = prediction["bbox"]
     #     extent = [bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3]]
     #     return extent
-    
+
     pose_coords = unflatten_pose_data(prediction)
     min_x = np.NaN
     min_y = np.NaN
@@ -225,7 +231,10 @@ def compare_poses_cosine(p1, p2):
     Calculate the similarity of the 'keypoint' portions of two Open PifPaf pose predictions
     by computing their cosine distance and subtracting this from 1 (so 1=identical).
     """
-    return compare_poses_cosine_flattened(np.array(unflatten_pose_data(p1))[:, :2].flatten(), np.array(unflatten_pose_data(p2))[:, :2].flatten())
+    return compare_poses_cosine_flattened(
+        np.array(unflatten_pose_data(p1))[:, :2].flatten(),
+        np.array(unflatten_pose_data(p2))[:, :2].flatten(),
+    )
 
 
 def compare_poses_correlation_flattened(p1, p2):
@@ -243,7 +252,10 @@ def compare_poses_correlation(p1, p2):
     Note that this is only likely to generate reliable results if run on coordinates that
     have been normalized on at least one axis.
     """
-    return compare_poses_correlation_flattened(np.array(unflatten_pose_data(p1))[:, :2].flatten(), np.array(unflatten_pose_data(p2))[:, :2].flatten())
+    return compare_poses_correlation_flattened(
+        np.array(unflatten_pose_data(p1))[:, :2].flatten(),
+        np.array(unflatten_pose_data(p2))[:, :2].flatten(),
+    )
 
 
 def compute_joint_angles(prediction):
@@ -260,20 +272,20 @@ def compute_joint_angles(prediction):
 
     # Joints to use:
     joint_angle_points = [
-        [3, 5, 6],    # Left ear - left shoulder - right shoulder
-        [4, 6, 5],    # Right ear - right shoulder - left shoulder
-        [3, 5, 11],   # Left ear - left shoulder - left hip
-        [4, 6, 12],   # Right ear - right shoulder - right hip
-        [11, 5, 7],   # Left hip - left shoulder - left elbow
-        [12, 6, 8],   # Right hip - right shoulder - right elbow
-        [5, 7, 9],    # Left shoulder - left elbow - left wrist
-        [6, 8, 10],   # Right shoulder - right elbow - right wrist
+        [3, 5, 6],  # Left ear - left shoulder - right shoulder
+        [4, 6, 5],  # Right ear - right shoulder - left shoulder
+        [3, 5, 11],  # Left ear - left shoulder - left hip
+        [4, 6, 12],  # Right ear - right shoulder - right hip
+        [11, 5, 7],  # Left hip - left shoulder - left elbow
+        [12, 6, 8],  # Right hip - right shoulder - right elbow
+        [5, 7, 9],  # Left shoulder - left elbow - left wrist
+        [6, 8, 10],  # Right shoulder - right elbow - right wrist
         [5, 11, 13],  # Left shoulder - left hip - left knee
         [6, 12, 14],  # Right shoulder - right hip - right knee
-        [13, 11, 12], # Left knee - left hip - right hip
-        [14, 12, 11], # Right knee - right hip - left hip
-        [11, 13, 15], # Left hip - left knee - left ankle
-        [12, 14, 16], # Right hip - right knee - right ankle
+        [13, 11, 12],  # Left knee - left hip - right hip
+        [14, 12, 11],  # Right knee - right hip - left hip
+        [11, 13, 15],  # Left hip - left knee - left ankle
+        [12, 14, 16],  # Right hip - right knee - right ankle
     ]
 
     for angle_points in joint_angle_points:
@@ -295,18 +307,21 @@ def compute_joint_angles(prediction):
             ) - np.array(
                 [pose_coords[angle_points[1]][0], pose_coords[angle_points[1]][1]]
             )
-            
+
             cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
-            joint_angles.append(np.arccos(cosine_angle)) # This is the angle
-            
+            joint_angles.append(np.arccos(cosine_angle))  # This is the angle
+
             # The rotation is just the angle between the first segment and a segment
             # drawn straight upwards from the midpoint of the angle.
-            bd = np.array([pose_coords[angle_points[1]][0], pose_coords[angle_points[1]][1]-1]
+            bd = np.array(
+                [pose_coords[angle_points[1]][0], pose_coords[angle_points[1]][1] - 1]
             ) - np.array(
-               [pose_coords[angle_points[1]][0], pose_coords[angle_points[1]][1]]
+                [pose_coords[angle_points[1]][0], pose_coords[angle_points[1]][1]]
             )
-            
-            rotation = np.arctan2(ba[0]*bd[1] - ba[1]*bd[0], ba[0]*bd[0] + ba[1]*bd[1])
+
+            rotation = np.arctan2(
+                ba[0] * bd[1] - ba[1] * bd[0], ba[0] * bd[0] + ba[1] * bd[1]
+            )
             joint_angles.append(rotation)
 
     return joint_angles
@@ -325,6 +340,118 @@ def compare_poses_angles(joint_angles1, joint_angles2):
         np.nansum(np.square(np.array(joint_angles2)))
     )
     return angles_dot / angles_norm
+
+
+def normalize_poses(pose_file, pose_data):
+    normalized_pose_file = pose_file.replace(".openpifpaf.json", ".normalized.p")
+    metadata_file = pose_file.replace(".openpifpaf.json", ".metadata.p")
+
+    if (os.path.isfile(normalized_pose_file)) and (os.path.isfile(metadata_file)):
+        normalized_poses = pickle.load(open(normalized_pose_file, "rb"))
+        [normalized_pose_metadata, framepose_to_seqno] = pickle.load(
+            open(metadata_file, "rb")
+        )
+    else:
+        print("Computing normalized poses for comparison and clustering")
+        print("This may take a while...")
+        bar = IntProgress(min=0, max=len(pose_data))
+        display(bar)
+
+        # For cluster analysis, each pose must be a 1D array, and all poses must be in a 1D list
+        # that includes only the pose keypoint coordinates (not the confidence scores).
+        # So we also create a parallel data structure to keep track of the frame number and numbering
+        # within the frame of each of the poses.
+        normalized_poses = []
+        normalized_pose_metadata = []
+
+        framepose_to_seqno = {}
+        pose_seqno = 0
+
+        for i, frame in enumerate(pose_data):
+            if i % 100 == 0:
+                bar.value = i
+
+            for j, pose in enumerate(frame["predictions"]):
+                normalized_coords = extract_trustworthy_coords(
+                    shift_normalize_rescale_pose_coords(pose)
+                )
+                normalized_poses.append(normalized_coords)
+                normalized_pose_metadata.append({"frameno": i, "poseno": j})
+
+                if i in framepose_to_seqno:
+                    framepose_to_seqno[i][j] = pose_seqno
+                else:
+                    framepose_to_seqno[i] = {j: pose_seqno}
+
+                pose_seqno += 1
+
+        bar.bar_style = "success"
+
+        pickle.dump(normalized_poses, open(normalized_pose_file, "wb"))
+        pickle.dump(
+            [normalized_pose_metadata, framepose_to_seqno], open(metadata_file, "wb")
+        )
+
+    # Need to rebuild an actual structure of normalized pose data that parallels the
+    # structure of pose_data (normalized_poses doesn't actually do this).
+    normalized_pose_data = []
+
+    for frameno, frame in enumerate(pose_data):
+        frame_predictions = {"predictions": []}
+
+        if frameno in framepose_to_seqno:
+            for poseno in framepose_to_seqno[frameno]:
+                frame_predictions["predictions"].append(
+                    normalized_poses[framepose_to_seqno[frameno][poseno]]
+                )
+        normalized_pose_data.append(frame_predictions)
+
+    return [
+        normalized_poses,
+        normalized_pose_metadata,
+        framepose_to_seqno,
+        normalized_pose_data,
+    ]
+
+
+def get_pose_angles(pose_data, framepose_to_seqno):
+    pose_angles = []
+    # pose_angles_metadata = [] # This is redundant with normalized_pose_metadata...
+    # framepose_to_seqno = {} # Already computed when finding normalized poses
+    pose_seqno = 0
+
+    print("Precomputing pose angle data")
+
+    bar = IntProgress(min=0, max=len(pose_data))
+    display(bar)
+
+    for i, frame in enumerate(pose_data):
+        if i % 100 == 0:
+            bar.value = i
+
+        for j, pose in enumerate(frame["predictions"]):
+            angles = compute_joint_angles(pose)
+
+            pose_angles.append(angles)
+            # pose_angles_metadata.append({"frameno": i, "poseno": j})
+
+            pose_seqno += 1
+
+    # Need to rebuild an actual structure of pose angle data that parallels the
+    # structure of pose_data.
+    pose_angle_data = []
+
+    for frameno, frame in enumerate(pose_data):
+        frame_predictions = {"predictions": []}
+
+        if frameno in framepose_to_seqno:
+            for poseno in framepose_to_seqno[frameno]:
+                frame_predictions["predictions"].append(
+                    pose_angles[framepose_to_seqno[frameno][poseno]]
+                )
+        pose_angle_data.append(frame_predictions)
+
+    return [pose_angle_data, pose_angles]
 
 
 """ Pose drawing and visualization functions """
@@ -653,18 +780,24 @@ def get_armature_prevalences(cluster_poses):
 """ Pose tracking visualization functions """
 
 
-def snapshot_pose_track(tracking_id):
+def snapshot_pose_track(tracking_id, pose_tracks, normalized_pose_data):
     """
     Superimpose all of the instances of a pose across a tracking sequence, allowing
     for lateral movement -- so the size of the background is the combined extent of
     all of the poses within the original frame.
     """
-    
+
     # Could just plot these on the same plot via pyplot, but this looks a bit better
     images_array = []
 
     for t, track_frame in enumerate(pose_tracks[tracking_id]):
-        pose_pil_img = draw_normalized_and_unflattened_pose(unflatten_pose_data(normalized_pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]]))
+        pose_pil_img = draw_normalized_and_unflattened_pose(
+            unflatten_pose_data(
+                normalized_pose_data[track_frame["frameno"]]["predictions"][
+                    track_frame["poseno"]
+                ]
+            )
+        )
         images_array.append(np.array(pose_pil_img))
 
     images_array = np.array(images_array, dtype=float)
@@ -677,69 +810,93 @@ def snapshot_pose_track(tracking_id):
 
     plt.imshow(enhanced_pil_img)
 
-    
-def animate_pose_track(tracking_id):
+
+def animate_pose_track(tracking_id, pose_tracks, normalized_pose_data, video_fps):
     """
     Iteratively draw all of the instances of a pose across a tracking sequence
     at the time points when they appear, blanking the background between frames.
     """
-    
+
     canvas = Canvas(width=POSE_MAX_DIM, height=POSE_MAX_DIM, sync_image_data=True)
 
     display(canvas)
 
     with hold_canvas():
         for t, track_frame in enumerate(pose_tracks[tracking_id]):
-
             canvas.clear()
-            draw_normalized_pose_on_canvas(normalized_pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]], canvas)
-            if t+1 < len(pose_tracks[tracking_id]):
-                sleep_len = (pose_tracks[tracking_id][t+1]["frameno"] - pose_tracks[tracking_id][t]["frameno"]) * 1000 / video_fps
+            draw_normalized_pose_on_canvas(
+                normalized_pose_data[track_frame["frameno"]]["predictions"][
+                    track_frame["poseno"]
+                ],
+                canvas,
+            )
+            if t + 1 < len(pose_tracks[tracking_id]):
+                sleep_len = (
+                    (
+                        pose_tracks[tracking_id][t + 1]["frameno"]
+                        - pose_tracks[tracking_id][t]["frameno"]
+                    )
+                    * 1000
+                    / video_fps
+                )
                 canvas.sleep(sleep_len)
 
-                
-def get_track_boundaries(tracking_id):
+
+def get_track_boundaries(tracking_id, pose_tracks, pose_data):
     """
     Determine the maximum extent of all pose instances in a tracking sequence,
     relative to the original frame.
     """
-    
+
     track_boundaries = []
     for t, track_frame in enumerate(pose_tracks[tracking_id]):
-        track_boundaries.append(get_pose_extent(pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]]))
-        
-    return [np.min(np.array(track_boundaries)[:,0]),
-            np.min(np.array(track_boundaries)[:,1]),
-            np.max(np.array(track_boundaries)[:,2]),
-            np.max(np.array(track_boundaries)[:,3])
-           ]
+        track_boundaries.append(
+            get_pose_extent(
+                pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]]
+            )
+        )
+
+    return [
+        np.min(np.array(track_boundaries)[:, 0]),
+        np.min(np.array(track_boundaries)[:, 1]),
+        np.max(np.array(track_boundaries)[:, 2]),
+        np.max(np.array(track_boundaries)[:, 3]),
+    ]
 
 
-def snapshot_pose_track_noclipping(tracking_id):
+def snapshot_pose_track_noclipping(tracking_id, pose_tracks, pose_data):
     """
     Plot all of the instances of a pose across a tracking sequence in their original
     positions in the video frame, so the dimensions of the background are the combined
     extent of all of the poses, allowing for lateral movement.
     """
-    
-    min_x, min_y, max_x, max_y = get_track_boundaries(tracking_id)
-    
-    bg_img = Image.new("RGBA", (round(max_x - min_x) * UPSCALE, round(max_y - min_y) * UPSCALE))
+
+    min_x, min_y, max_x, max_y = get_track_boundaries(
+        tracking_id, pose_tracks, pose_data
+    )
+
+    bg_img = Image.new(
+        "RGBA", (round(max_x - min_x) * UPSCALE, round(max_y - min_y) * UPSCALE)
+    )
     drawing = ImageDraw.Draw(bg_img)
 
     for t, track_frame in enumerate(pose_tracks[tracking_id]):
-        pose_keypoints = pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]]["keypoints"]
+        pose_keypoints = pose_data[track_frame["frameno"]]["predictions"][
+            track_frame["poseno"]
+        ]["keypoints"]
         pose_coords = np.array_split(pose_keypoints, len(pose_keypoints) / 3)
         drawing = draw_armatures(pose_coords, drawing, x_shift=min_x, y_shift=min_y)
-        
+
     bg_img = bg_img.resize(
         (round(max_x - min_x), round(max_y - min_y)), resample=Image.Resampling.LANCZOS
     )
-    
+
     plt.imshow(bg_img)
 
 
-def animate_pose_track_noclipping_bg(tracking_id):
+def animate_pose_track_noclipping_bg(
+    tracking_id, pose_tracks, pose_data, video_file, video_fps
+):
     """
     Iteratively draw all of the instances of a pose across a tracking sequence at the
     time points when they appear, as well as all of the source video frame excerpts
@@ -747,54 +904,222 @@ def animate_pose_track_noclipping_bg(tracking_id):
     detected in a particular frame, the background should still be updated, maintaining
     the original frame rate of the video.
     """
-    
+
     def draw_frame_bg_on_canvas(canvas, frameno):
         pose_frame_image = image_from_video_frame(video_file, frameno)
-        pose_base_image = pose_frame_image[round(min_y):round(max_y), round(min_x):round(max_x)]
+        pose_base_image = pose_frame_image[
+            round(min_y) : round(max_y), round(min_x) : round(max_x)
+        ]
         canvas.put_image_data(pose_base_image, 0, 0)
-        
-    min_x, min_y, max_x, max_y = get_track_boundaries(tracking_id)
+
+    min_x, min_y, max_x, max_y = get_track_boundaries(
+        tracking_id, pose_tracks, pose_data
+    )
     sleep_len = 1000 / video_fps
-        
-    canvas = Canvas(width=round(max_x - min_x), height=round(max_y - min_y), sync_image_data=True) 
+
+    canvas = Canvas(
+        width=round(max_x - min_x), height=round(max_y - min_y), sync_image_data=True
+    )
     display(canvas)
-        
+
     with hold_canvas():
         draw_track_index = 0
-        for frameno in range(pose_tracks[tracking_id][0]["frameno"], pose_tracks[tracking_id][-1]["frameno"]+1):
+        for frameno in range(
+            pose_tracks[tracking_id][0]["frameno"],
+            pose_tracks[tracking_id][-1]["frameno"] + 1,
+        ):
             canvas.clear()
             draw_frame_bg_on_canvas(canvas, frameno)
-            
+
             if pose_tracks[tracking_id][draw_track_index]["frameno"] == frameno:
                 poseno = pose_tracks[tracking_id][draw_track_index]["poseno"]
-                draw_pose_on_canvas(pose_data[frameno]["predictions"][poseno], canvas, x_shift=min_x, y_shift=min_y)
+                draw_pose_on_canvas(
+                    pose_data[frameno]["predictions"][poseno],
+                    canvas,
+                    x_shift=min_x,
+                    y_shift=min_y,
+                )
                 draw_track_index += 1
 
             canvas.sleep(sleep_len)
-        
-                
-def animate_pose_track_noclipping(tracking_id):
+
+
+def animate_pose_track_noclipping(tracking_id, pose_tracks, pose_data, video_fps):
     """
     Iteratively draw all of the instances of a pose across a tracking sequence at the
     time points when they appear. Freeze the pose in place for the duration of the frames
     during which no pose from the tracklet was detected, maintaining the original frame
     rate of the video.
     """
-    min_x, min_y, max_x, max_y = get_track_boundaries(tracking_id)
-        
-    canvas = Canvas(width=round(max_x - min_x), height=round(max_y - min_y), sync_image_data=True)
-        
+    min_x, min_y, max_x, max_y = get_track_boundaries(
+        tracking_id, pose_tracks, pose_data
+    )
+
+    canvas = Canvas(
+        width=round(max_x - min_x), height=round(max_y - min_y), sync_image_data=True
+    )
+
     display(canvas)
-    
+
     with hold_canvas():
         for t, track_frame in enumerate(pose_tracks[tracking_id]):
             canvas.clear()
-  
-            draw_pose_on_canvas(pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]], canvas, x_shift=min_x, y_shift=min_y)
-            if t+1 < len(pose_tracks[tracking_id]):
-                
+
+            draw_pose_on_canvas(
+                pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]],
+                canvas,
+                x_shift=min_x,
+                y_shift=min_y,
+            )
+            if t + 1 < len(pose_tracks[tracking_id]):
                 this_pose_frameno = pose_tracks[tracking_id][t]["frameno"]
-                next_pose_frameno = pose_tracks[tracking_id][t+1]["frameno"]
-                
+                next_pose_frameno = pose_tracks[tracking_id][t + 1]["frameno"]
+
                 sleep_len = (next_pose_frameno - this_pose_frameno) * 1000 / video_fps
                 canvas.sleep(sleep_len)
+
+
+def draw_all_tracklets(pose_tracks, pose_data, video_fps):
+    """
+    This  generates tracklet "snapshots" starting from the beginning of the video
+    (it needs to be stopped manually or it will run all the way to the end of the video)
+    """
+
+    for tracking_id in pose_tracks:
+        track_duration = (
+            pose_tracks[tracking_id][-1]["frameno"]
+            - pose_tracks[tracking_id][0]["frameno"]
+        ) / video_fps
+        # print("Track duration in seconds:", track_duration)
+        # print("Number of poses:", len(pose_tracks[tracking_id]))
+
+        if track_duration > 1:
+            print("Snapshotting track", tracking_id)
+            snapshot_pose_track_noclipping(tracking_id, pose_tracks, pose_data)
+            plt.show()
+        else:
+            print("Track", tracking_id, "is <1s, skipping")
+
+
+""" Pose clustering functions """
+
+
+NUMBER_OF_CLUSTERS = 100
+CLUSTERS_TO_DRAW = 10
+IMAGE_SAMPLE = 100  # Only contribute 1 in 100 images to the background average
+AVERAGE_BACKGROUNDS = True  # Set to True to average the pose backgrounds
+
+
+def cluster_all_poses(faiss_input):
+    print(f"Clustering video poses into {NUMBER_OF_CLUSTERS} clusters")
+    kmeans_faiss = faiss.Kmeans(d=faiss_input.shape[1], k=NUMBER_OF_CLUSTERS, niter=100)
+    kmeans_faiss.train(faiss_input)
+    _, cluster_labels = kmeans_faiss.index.search(faiss_input, 1)
+    cluster_labels = np.array(cluster_labels).flatten()
+
+    return cluster_labels
+
+
+def compute_cluster_distribution(cluster_labels, viz=True):
+    bin_counts = {}
+    cluster_to_pose = {}
+
+    for i in range(len(cluster_labels)):
+        ct = cluster_labels[i]
+        if ct not in bin_counts:
+            bin_counts[ct] = 1
+        else:
+            bin_counts[ct] += 1
+        if ct not in cluster_to_pose:
+            cluster_to_pose[ct] = [i]
+        else:
+            cluster_to_pose[ct].append(i)
+
+    sorted_bin_counts = dict(
+        sorted(bin_counts.items(), key=lambda item: item[1], reverse=True)
+    )
+    sorted_bin_counts_list = list(sorted_bin_counts.values())
+
+    if viz:
+        plt.bar(range(len(sorted_bin_counts_list)), sorted_bin_counts_list)
+        plt.xlabel("cluster rank (by size)")
+        plt.ylabel("# poses")
+        plt.show()
+
+    return [cluster_to_pose, sorted_bin_counts]
+
+
+def draw_cluster_representatives(
+    cluster_to_pose,
+    sorted_bin_counts,
+    normalized_poses,
+    normalized_pose_metadata,
+    pose_data,
+    video_file,
+    clusters_to_draw=CLUSTERS_TO_DRAW,
+    average_backgrounds=AVERAGE_BACKGROUNDS,
+):
+    print("Drawing averages of cluster poses and backgrounds")
+
+    for k in list(sorted_bin_counts.keys())[:clusters_to_draw]:
+        cluster_poses = []
+        images_array = []
+
+        # Use some matplotlib weirdness to draw the stick figures in higher resolution
+        # but with the same axis labels (0-100 "pixels")
+        fig, ax = plt.subplots()
+        fig.set_size_inches(UPSCALE * 100 / fig.dpi, UPSCALE * 100 / fig.dpi)
+        fig.canvas.draw()
+
+        print("Cluster:", k, "| total poses:", len(cluster_to_pose[k]))
+
+        for i, pose_id in enumerate(cluster_to_pose[k]):
+            cluster_poses.append(normalized_poses[pose_id])
+
+            # Don't average the background of every pose in the cluster,
+            # because that usually takes way too long
+            if average_backgrounds and (i % IMAGE_SAMPLE) == 0:
+                # Get the original posedata for the pose in order to extract the background image
+                pose_frameno = normalized_pose_metadata[pose_id]["frameno"]
+                poseno = normalized_pose_metadata[pose_id]["poseno"]
+                pose_pred = pose_data[pose_frameno]["predictions"][poseno]
+
+                pose_base_image = extract_pose_background(
+                    pose_pred, video_file, pose_frameno
+                )
+
+                # Resize/normalize the cutout background dimensions, just as is done
+                # for the pose itself
+                resized_image = cv2.resize(
+                    pose_base_image,
+                    dsize=(POSE_MAX_DIM * UPSCALE, POSE_MAX_DIM * UPSCALE),
+                    interpolation=cv2.INTER_LANCZOS4,
+                )
+                images_array.append(resized_image)
+
+        if average_backgrounds:
+            images_array = np.array(images_array, dtype=float)
+
+            # Average the RGB values of all of the pose background images
+            avg_background_img = np.mean(images_array, axis=0).astype(np.uint8)
+            plt.imshow(avg_background_img)
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings(action="ignore", message="Mean of empty slice")
+            cluster_average = np.nanmean(np.array(cluster_poses), axis=0).tolist()
+
+        armature_prevalences = get_armature_prevalences(cluster_poses)
+        cluster_average = np.array_split(cluster_average, len(cluster_average) / 2)
+        cluster_average_img = draw_normalized_and_unflattened_pose(
+            cluster_average, armature_prevalences=armature_prevalences
+        )
+
+        plt.imshow(cluster_average_img)
+        axis_labels = [0] + list(range(0, 100, 20))
+        axis_label_locs = [lab * UPSCALE for lab in axis_labels]
+
+        ax.xaxis.set_major_locator(mticker.FixedLocator(axis_label_locs))
+        ax.set_xticklabels(axis_labels)
+        ax.yaxis.set_major_locator(mticker.FixedLocator(axis_label_locs))
+        ax.set_yticklabels(axis_labels)
+        plt.show()
