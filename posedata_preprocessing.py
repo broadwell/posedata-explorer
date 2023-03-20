@@ -13,6 +13,7 @@ from yolox.tracker.byte_tracker import BYTETracker
 
 def get_available_videos(data_folder):
     """
+    XXX CURRENTLY NOT USED; need to import pathlib.Path if re-enabled
     Available videos will be limited to those with a .json and matching video (.mp4, .avi, etc)
     file in a predefined directory (defaulting to the notebook's running directory).
     NOTE that this is currently not being used, as the ipyfilechooser widget provides
@@ -114,7 +115,7 @@ def preprocess_pose_json(pose_file, video_file):
     return [pose_data, pose_series]
 
 
-""" Pose tracking functions """
+# --- POSE TRACKING FUNCTIONS ---
 
 # This can be run as a separate preprocessing/data ingest step,
 # as it only relies on the data in the Open PifPaf detection output
@@ -124,6 +125,8 @@ def preprocess_pose_json(pose_file, video_file):
 
 
 class TrackerArgs:
+    """Default arguments to use when instantiating a BYTETracker"""
+
     def __init__(self):
         self.track_thresh = 0.5  # min pose score for tracking -- may need to lower this
         self.track_buffer = 30
@@ -134,6 +137,12 @@ class TrackerArgs:
 
 
 def track_poses(pose_data, video_fps, video_width, video_height, show_progress=False):
+    """
+    Use a BYTETracker to detect consecutive pose 'tracklets' in the precomputed
+    pose_data input (e.g., per-frame detections from Open PifPaf) that likely
+    belong to the same figure, and write this tracking information into a new
+    copy of pose_data
+    """
     args = TrackerArgs()
     tracker = BYTETracker(args, frame_rate=video_fps)
 
@@ -176,7 +185,7 @@ def track_poses(pose_data, video_fps, video_width, video_height, show_progress=F
             ]
             detections.append(bbox + [prediction["score"]])
         # Args 2 and 3 can differ if the image has been scaled at some point, which we're not doing
-        if len(detections):
+        if len(detections) > 0:
             online_targets = tracker.update(
                 np.array(detections, dtype=float),
                 [video_height, video_width],
@@ -263,6 +272,11 @@ def track_poses(pose_data, video_fps, video_width, video_height, show_progress=F
 
 
 def count_tracked_poses(tracked_pose_data):
+    """
+    Get the number of figures currently being tracked in each
+    frame and write them to a list, which can then be added
+    to pose_series for use in the Bokeh timeline vis.
+    """
     tracked_poses_counts = []
 
     for frame in tracked_pose_data:
@@ -277,17 +291,23 @@ def count_tracked_poses(tracked_pose_data):
 
 
 def get_pose_tracking(video_file, pose_data, video_fps, video_width, video_height):
+    """
+    If previously computed pose tracking data is not available in a file,
+    run track_poses() to generate it. Also build and return a tracked_poses
+    data structure that maps tracklet IDs to the frames in which they appear.
+    """
+
     tracked_pose_file = f"{video_file}.tracked.openpifpaf.json"
 
     if os.path.isfile(tracked_pose_file):
         print("Loading previously computed pose tracking information")
-        tracked_pose_data = json.load(open(tracked_pose_file, "r"))
+        tracked_pose_data = json.load(open(tracked_pose_file, "r", encoding="utf8"))
     else:
         tracked_pose_data = track_poses(
             pose_data, video_fps, video_width, video_height, show_progress=True
         )
         print("Writing pose data with tracking info to", tracked_pose_file)
-        json.dump(tracked_pose_data, open(tracked_pose_file, "w"))
+        json.dump(tracked_pose_data, open(tracked_pose_file, "w", encoding="utf8"))
 
     pose_tracks = {}
 

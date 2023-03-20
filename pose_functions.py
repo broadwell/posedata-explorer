@@ -15,7 +15,7 @@ import warnings
 import faiss
 
 
-"""All constants are defined up here, though in the future they could be moved into the appropriate sub-modules."""
+# All constants are defined up here, though in the future they could be moved into the appropriate sub-modules.
 
 # The body part numberings and armature connectors for the 17-keypoint COCO pose format are defined in
 # https://github.com/openpifpaf/openpifpaf/blob/main/src/openpifpaf/plugins/coco/constants.py
@@ -79,12 +79,12 @@ font_path = os.path.join(
     matplotlib.__path__[0], "mpl-data", "fonts", "ttf", "DejaVuSans.ttf"
 )
 try:
-    label_font = ImageFont.truetype(font_path, size=128)
-except:
-    label_font = None
+    LABEL_FONT = ImageFont.truetype(font_path, size=128)
+except Exception as e:
+    LABEL_FONT = None
 
 
-""" Posedata manipulation and comparison functions """
+# --- POSEDATA MANIPULATION AND COMPARISON FUNCTIONS ---
 
 
 def unflatten_pose_data(prediction):
@@ -343,6 +343,13 @@ def compare_poses_angles(joint_angles1, joint_angles2):
 
 
 def normalize_poses(pose_file, pose_data):
+    """
+    If previously computed normalized pose data and metadata is not available in
+    files, normalize all of the poses in the input pose_data and compute
+    accompanying metadata, a flattened list of all poses in the video (for use
+    with the vector-search indexer), and mappings from frame and pose IDs to
+    positions in the flattened sequence, save them to files and return them.
+    """
     normalized_pose_file = pose_file.replace(".openpifpaf.json", ".normalized.p")
     metadata_file = pose_file.replace(".openpifpaf.json", ".metadata.p")
 
@@ -354,13 +361,13 @@ def normalize_poses(pose_file, pose_data):
     else:
         print("Computing normalized poses for comparison and clustering")
         print("This may take a while...")
-        bar = IntProgress(min=0, max=len(pose_data))
-        display(bar)
+        progress_bar = IntProgress(min=0, max=len(pose_data))
+        display(progress_bar)
 
         # For cluster analysis, each pose must be a 1D array, and all poses must be in a 1D list
         # that includes only the pose keypoint coordinates (not the confidence scores).
-        # So we also create a parallel data structure to keep track of the frame number and numbering
-        # within the frame of each of the poses.
+        # So we also create a parallel data structure to keep track of the frame number and
+        # numbering within the frame of each of the poses.
         normalized_poses = []
         normalized_pose_metadata = []
 
@@ -369,7 +376,7 @@ def normalize_poses(pose_file, pose_data):
 
         for i, frame in enumerate(pose_data):
             if i % 100 == 0:
-                bar.value = i
+                progress_bar.value = i
 
             for j, pose in enumerate(frame["predictions"]):
                 normalized_coords = extract_trustworthy_coords(
@@ -385,7 +392,7 @@ def normalize_poses(pose_file, pose_data):
 
                 pose_seqno += 1
 
-        bar.bar_style = "success"
+        progress_bar.bar_style = "success"
 
         pickle.dump(normalized_poses, open(normalized_pose_file, "wb"))
         pickle.dump(
@@ -415,6 +422,14 @@ def normalize_poses(pose_file, pose_data):
 
 
 def get_pose_angles(pose_data, framepose_to_seqno):
+    """
+    Run pose_angles to get angle data (in radians) for various
+    armature joints on each pose in pose_data; create a parallel
+    data structure to pose_data that includes this angle data as
+    well as a flattened list of all per-pose angles in the video,
+    for use with the vector-search indexer.
+    """
+
     pose_angles = []
     # pose_angles_metadata = [] # This is redundant with normalized_pose_metadata...
     # framepose_to_seqno = {} # Already computed when finding normalized poses
@@ -422,18 +437,17 @@ def get_pose_angles(pose_data, framepose_to_seqno):
 
     print("Precomputing pose angle data")
 
-    bar = IntProgress(min=0, max=len(pose_data))
-    display(bar)
+    progress_bar = IntProgress(min=0, max=len(pose_data))
+    display(progress_bar)
 
     for i, frame in enumerate(pose_data):
         if i % 100 == 0:
-            bar.value = i
+            progress_bar.value = i
 
-        for j, pose in enumerate(frame["predictions"]):
+        for pose in frame["predictions"]:
             angles = compute_joint_angles(pose)
 
             pose_angles.append(angles)
-            # pose_angles_metadata.append({"frameno": i, "poseno": j})
 
             pose_seqno += 1
 
@@ -454,7 +468,7 @@ def get_pose_angles(pose_data, framepose_to_seqno):
     return [pose_angle_data, pose_angles]
 
 
-""" Pose drawing and visualization functions """
+# --- POSE DRAWING AND VISUALIZATION FUNCTIONS ---
 
 
 def image_from_video_frame(video_file, frameno):
@@ -553,7 +567,7 @@ def draw_armatures(pose_coords, drawing, line_prevalences=[], x_shift=0, y_shift
 
         # If line_prevalences are provided, we know the pose coords don't contain confidence
         # values, and instead the x and y values are NaN if the point has 0 confidence
-        if len(line_prevalences):
+        if len(line_prevalences) > 0:
             if np.isnan(pose_coords[seg[0] - 1][0]) or np.isnan(
                 pose_coords[seg[1] - 1][1]
             ):
@@ -624,7 +638,7 @@ def add_pose_to_drawing(pose_prediction, drawing, seqno=None, show_bbox=False):
         drawing.text(
             upper_left,
             pose_label,
-            font=label_font,
+            font=LABEL_FONT,
             align="right",
             fill=pose_outline_color,
         )
@@ -641,7 +655,6 @@ def normalize_and_draw_pose(pose_prediction, video_file, frameno=None):
     pose. Note also that add_pose_to_drawing() will draw armature lines with lower
     confidence values as more transparent than high-confidence lines.
     """
-    # XXX Should the confidence values be used here as armature_prevalences, or is that done elsewhere?
     original_prediction = pose_prediction
     pose_prediction = shift_normalize_rescale_pose_coords(pose_prediction)
     # Can also grab the background image and excerpt/scale it to match, if desired
@@ -680,10 +693,14 @@ def draw_normalized_and_unflattened_pose(pose_prediction, armature_prevalences=[
 
 
 def draw_frame(frame, video_width, video_height, bg_img=None):
-    """Draw all detected poses in the specified frame, superimposing them on the frame image, if provided."""
-    # The only way to get smooth(er) lines in the pose armatures via PIL ImageDraw is to upscale the entire
-    # image by some factor, draw the lines, then downscale back to the original resolution while applying
-    # Lanczos resampling, because ImageDraw doesn't do any native anti-aliasing.
+    """
+    Draw all detected poses in the specified frame, superimposing them on the frame image,
+    if provided.
+    """
+    # The only way to get smooth(er) lines in the pose armatures via PIL ImageDraw is to
+    # upscale the entire image by some factor, draw the lines, then downscale back to the
+    # original resolution while applying Lanczos resampling, because ImageDraw doesn't do
+    # any native anti-aliasing.
     if bg_img is None:
         bg_img = Image.new("RGBA", (video_width * UPSCALE, video_height * UPSCALE))
     else:
@@ -777,7 +794,7 @@ def get_armature_prevalences(cluster_poses):
     return [segcount / len(cluster_poses) for segcount in armature_appearances]
 
 
-""" Pose tracking visualization functions """
+# --- POSE TRACKING VISUALIZATION FUNCTIONS ---
 
 
 def snapshot_pose_track(tracking_id, pose_tracks, normalized_pose_data):
@@ -790,7 +807,7 @@ def snapshot_pose_track(tracking_id, pose_tracks, normalized_pose_data):
     # Could just plot these on the same plot via pyplot, but this looks a bit better
     images_array = []
 
-    for t, track_frame in enumerate(pose_tracks[tracking_id]):
+    for track_frame in pose_tracks[tracking_id]:
         pose_pil_img = draw_normalized_and_unflattened_pose(
             unflatten_pose_data(
                 normalized_pose_data[track_frame["frameno"]]["predictions"][
@@ -849,7 +866,7 @@ def get_track_boundaries(tracking_id, pose_tracks, pose_data):
     """
 
     track_boundaries = []
-    for t, track_frame in enumerate(pose_tracks[tracking_id]):
+    for track_frame in pose_tracks[tracking_id]:
         track_boundaries.append(
             get_pose_extent(
                 pose_data[track_frame["frameno"]]["predictions"][track_frame["poseno"]]
@@ -880,7 +897,7 @@ def snapshot_pose_track_noclipping(tracking_id, pose_tracks, pose_data):
     )
     drawing = ImageDraw.Draw(bg_img)
 
-    for t, track_frame in enumerate(pose_tracks[tracking_id]):
+    for track_frame in pose_tracks[tracking_id]:
         pose_keypoints = pose_data[track_frame["frameno"]]["predictions"][
             track_frame["poseno"]
         ]["keypoints"]
@@ -1001,7 +1018,7 @@ def draw_all_tracklets(pose_tracks, pose_data, video_fps):
             print("Track", tracking_id, "is <1s, skipping")
 
 
-""" Pose clustering functions """
+# --- POSE CLUSTERING FUNCTIONS ---
 
 
 NUMBER_OF_CLUSTERS = 100
@@ -1011,6 +1028,10 @@ AVERAGE_BACKGROUNDS = True  # Set to True to average the pose backgrounds
 
 
 def cluster_all_poses(faiss_input):
+    """
+    Cluster video poses into NUMBER_OF_CLUSTERS via K-means, using the similarity
+    indexing already computed via FAISS.
+    """
     print(f"Clustering video poses into {NUMBER_OF_CLUSTERS} clusters")
     kmeans_faiss = faiss.Kmeans(d=faiss_input.shape[1], k=NUMBER_OF_CLUSTERS, niter=100)
     kmeans_faiss.train(faiss_input)
@@ -1021,19 +1042,22 @@ def cluster_all_poses(faiss_input):
 
 
 def compute_cluster_distribution(cluster_labels, viz=True):
+    """
+    Compute and visualize a bar plot of the number of poses in each of the
+    NUMBER_OF_CLUSTERS similarity clusters, ordered by decreasing size.
+    """
     bin_counts = {}
     cluster_to_pose = {}
 
-    for i in range(len(cluster_labels)):
-        ct = cluster_labels[i]
-        if ct not in bin_counts:
-            bin_counts[ct] = 1
+    for i, clust in enumerate(cluster_labels):
+        if clust not in bin_counts:
+            bin_counts[clust] = 1
         else:
-            bin_counts[ct] += 1
-        if ct not in cluster_to_pose:
-            cluster_to_pose[ct] = [i]
+            bin_counts[clust] += 1
+        if clust not in cluster_to_pose:
+            cluster_to_pose[clust] = [i]
         else:
-            cluster_to_pose[ct].append(i)
+            cluster_to_pose[clust].append(i)
 
     sorted_bin_counts = dict(
         sorted(bin_counts.items(), key=lambda item: item[1], reverse=True)
@@ -1059,7 +1083,15 @@ def draw_cluster_representatives(
     clusters_to_draw=CLUSTERS_TO_DRAW,
     average_backgrounds=AVERAGE_BACKGROUNDS,
 ):
-    print("Drawing averages of cluster poses and backgrounds")
+    """
+    For the first CLUSTERS_TO_DRAW pose clusters by descending population,
+    average the normalized coordinates (and confidence values) of all pose
+    armature links in the cluster; if average_backgrounds is True, do the
+    same for the pixel values of the pose source images, then plot the
+    results.
+    """
+
+    print("Drawing averages of cluster poses (and backgrounds, if requested)")
 
     for k in list(sorted_bin_counts.keys())[:clusters_to_draw]:
         cluster_poses = []

@@ -1,17 +1,14 @@
 from datetime import datetime
-import numpy as np
 from functools import partial
+import numpy as np
 
 
-from bokeh.io import output_notebook
 from bokeh.layouts import column, row
 from bokeh.models import (
     Button,
     CrosshairTool,
     DatetimeTickFormatter,
     Div,
-    LegendItem,
-    Line,
     LinearAxis,
     Range1d,
     Slider,
@@ -19,16 +16,16 @@ from bokeh.models import (
     TapTool,
     Toggle,
 )
-from bokeh.models.sources import ColumnDataSource
-from bokeh.models.widgets.inputs import Select
-from bokeh.plotting import figure, show
-from bokeh.themes import Theme
+from bokeh.plotting import figure
 
 from pose_functions import *
 
 
 def pil_to_bokeh_image(pil_img, target_width, target_height):
-    """The Bokeh interactive notebook tools will only display image data if it's formatted in a particular way"""
+    """
+    The Bokeh interactive notebook tools will only display image data if it's formatted
+    in a particular way
+    """
     img_array = np.array(pil_img.transpose(Image.Transpose.FLIP_TOP_BOTTOM))
 
     img = np.empty(img_array.shape[:2], dtype=np.uint32)
@@ -54,15 +51,17 @@ def build_bokeh_app(
     video_width,
     video_height,
     video_fps,
-    faiss_IP_index,
+    faiss_ip_index,
 ):
+    """Returns a function to run the Bokeh app in a Jupyter notebook environment"""
+
     def bkapp(doc):
         """Define and run the Bokeh interactive notebook (Python + Javascript) application"""
 
         # Some session data is best stored in a global dictionary
         data = {}
 
-        comparison_poses = [None, None]
+        comparison_poses = [{}, {}]
 
         max_y = max(pose_series["avg_coords_per_pose"] + pose_series["num_poses"])
 
@@ -235,7 +234,7 @@ def build_bokeh_app(
         pose_p2.circle(0, 0, size=0, alpha=0.0)
 
         def background_toggle_handler(event):
-            """When the image underlay is toggled on or off, prompt the slider to redraw the frame"""
+            """When the image underlay is toggled, prompt the slider to redraw the frame"""
             slider_callback(None, slider.value, slider.value)
 
         background_switch = Toggle(label="show background", active=False)
@@ -243,8 +242,9 @@ def build_bokeh_app(
 
         def slider_callback(attr, old, new):
             """
-            When the slider moves, draw the poses in the new frame and show the background if desired.
-            Also erase the selected pose drawings and the search results (not sure this is desirable).
+            When the slider moves, draw the poses in the new frame and show the background
+            if desired. Also erase the selected pose drawings and the search results (not
+            sure this is desirable).
             """
             slider.value = new
             fr.renderers = []
@@ -323,14 +323,14 @@ def build_bokeh_app(
             """
             pose_extent_maps = get_pose_extent_maps(slider.value - 1)
             clicked_poses = match_pose_pixel_maps(event.x, event.y, pose_extent_maps)
-            if len(clicked_poses):
+            if len(clicked_poses) > 0:
                 pose_img = normalize_and_draw_pose(
                     pose_data[slider.value - 1]["predictions"][clicked_poses[0]],
                     video_file,
                 )
                 pose_img = pil_to_bokeh_image(pose_img, POSE_MAX_DIM, POSE_MAX_DIM)
 
-                if pose_p1.title.text == "" or comparison_poses[0] is None:
+                if pose_p1.title.text == "" or not comparison_poses[0]:
                     comparison_poses[0] = {
                         "frameno": slider.value - 1,
                         "poseno": clicked_poses[0],
@@ -381,7 +381,7 @@ def build_bokeh_app(
                         normalized_p1,
                         normalized_p2,
                     )
-                    correlation = compare_poses_correlation_flattened(
+                    correlation_similarity = compare_poses_correlation_flattened(
                         normalized_p1,
                         normalized_p2,
                     )
@@ -394,7 +394,7 @@ def build_bokeh_app(
                     ][comparison_poses[1]["poseno"]]
                     pose_p2.title = f"{clicked_poses[0]+1}"
                     angle_similarity = compare_poses_angles(p1_angles, p2_angles)
-                    pose_info_div.text = f"Similarity - Cosine (keypoints): {(cosine_similarity*100):3.3f}% | Cosine (joints): {(angle_similarity*100):3.3f}% | Correlation (keypoints): {(correlation*100):3.3f}%"
+                    pose_info_div.text = f"Similarity - Cosine (keypoints): {(cosine_similarity*100):3.3f}% | Cosine (joints): {(angle_similarity*100):3.3f}% | Correlation (keypoints): {(correlation_similarity*100):3.3f}%"
 
         fr_tap_tool = TapTool()
 
@@ -546,9 +546,7 @@ def build_bokeh_app(
                 pose_box.renderers = []
 
             target_frameno = comparison_poses[0]["frameno"]
-            target_poseno = comparison_poses[0][
-                "poseno"
-            ]  # XXX could be int(pose_p1.title.text) - 1
+            target_poseno = comparison_poses[0]["poseno"]
 
             # If we want to use normalized armature coordinates instead
             # target_pose_w_confs = shift_normalize_rescale_pose_coords(
@@ -565,7 +563,7 @@ def build_bokeh_app(
                 "float32"
             )
 
-            D, I = faiss_IP_index.search(target_pose_query, SIMILAR_MATCHES_TO_FIND)
+            D, I = faiss_ip_index.search(target_pose_query, SIMILAR_MATCHES_TO_FIND)
 
             data["match_indices"] = I[0]
             data["match_scores"] = D[0]
@@ -629,7 +627,7 @@ def build_bokeh_app(
             )
 
             for li in tl.legend.items:
-                if li.label["value"] == "Similar poses" and li.visible == False:
+                if li.label["value"] == "Similar poses" and li.visible is False:
                     li.visible = True
 
             return True
@@ -649,7 +647,7 @@ def build_bokeh_app(
 
         def reset_subposes_handler(event):
             """This clears both the two similarity/query pose boxes as well as the match boxes."""
-            comparison_poses = [None, None]
+            comparison_poses = [{}, {}]
             pose_p1.title.text = ""
             pose_p1.renderers = []
             pose_p2.title.text = ""
