@@ -426,7 +426,7 @@ def build_bokeh_app(
                 y_range=(0, POSE_MAX_DIM),
                 width=POSE_MAX_DIM * 2,
                 height=POSE_MAX_DIM * 2,
-                title="",
+                title=f"Similar pose {s+1}",
                 tools="",
             )
 
