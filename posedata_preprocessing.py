@@ -7,13 +7,14 @@ import jsonlines
 import math
 import numpy as np
 import os
+from pathlib import Path
 
 from yolox.tracker.byte_tracker import BYTETracker
 
 
 def get_available_videos(data_folder):
     """
-    XXX CURRENTLY NOT USED; need to import pathlib.Path if re-enabled
+    XXX CURRENTLY NOT USED
     Available videos will be limited to those with a .json and matching video (.mp4, .avi, etc)
     file in a predefined directory (defaulting to the notebook's running directory).
     NOTE that this is currently not being used, as the ipyfilechooser widget provides
@@ -297,7 +298,11 @@ def get_pose_tracking(video_file, pose_data, video_fps, video_width, video_heigh
     data structure that maps tracklet IDs to the frames in which they appear.
     """
 
-    tracked_pose_file = f"{video_file}.tracked.openpifpaf.json"
+    data_dir = Path(video_file).with_suffix("")
+
+    tracked_pose_file = Path(
+        data_dir, Path(f"{video_file}.tracked.openpifpaf.json").name
+    )
 
     if os.path.isfile(tracked_pose_file):
         print("Loading previously computed pose tracking information")

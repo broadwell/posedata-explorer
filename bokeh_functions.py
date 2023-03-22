@@ -455,7 +455,6 @@ def build_bokeh_app(
         ] = None  # These are for storing similarity results from FAISS
         data["valid_search_results"] = 0
         data["search_results_index"] = 0
-        similar_frame_scores = [0] * len(pose_series["frame"])
         match_similarities = {}
         target_frameno = None
         target_poseno = None

@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import os
+from pathlib import Path
 import pickle
 from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageEnhance
 from scipy.spatial.distance import cosine, correlation
@@ -350,8 +351,15 @@ def normalize_poses(pose_file, pose_data):
     with the vector-search indexer), and mappings from frame and pose IDs to
     positions in the flattened sequence, save them to files and return them.
     """
-    normalized_pose_file = pose_file.replace(".openpifpaf.json", ".normalized.p")
-    metadata_file = pose_file.replace(".openpifpaf.json", ".metadata.p")
+
+    data_dir = Path(pose_file.replace(".openpifpaf.json", "")).with_suffix("")
+
+    normalized_pose_file = Path(
+        data_dir, Path(pose_file.replace(".openpifpaf.json", ".normalized.p")).name
+    )
+    metadata_file = Path(
+        data_dir, Path(pose_file.replace(".openpifpaf.json", ".metadata.p")).name
+    )
 
     if (os.path.isfile(normalized_pose_file)) and (os.path.isfile(metadata_file)):
         normalized_poses = pickle.load(open(normalized_pose_file, "rb"))
@@ -421,49 +429,63 @@ def normalize_poses(pose_file, pose_data):
     ]
 
 
-def get_pose_angles(pose_data, framepose_to_seqno):
+def get_all_pose_angles(pose_file, pose_data, framepose_to_seqno):
     """
-    Run pose_angles to get angle data (in radians) for various
+    If previously computed pose angle data is not available,
+    run pose_angles to get angle data (in radians) for various
     armature joints on each pose in pose_data; create a parallel
     data structure to pose_data that includes this angle data as
     well as a flattened list of all per-pose angles in the video,
     for use with the vector-search indexer.
     """
 
-    pose_angles = []
-    # pose_angles_metadata = [] # This is redundant with normalized_pose_metadata...
-    # framepose_to_seqno = {} # Already computed when finding normalized poses
-    pose_seqno = 0
+    data_dir = Path(pose_file.replace(".openpifpaf.json", "")).with_suffix("")
 
-    print("Precomputing pose angle data")
+    angles_data_file = Path(
+        data_dir, Path(pose_file.replace(".openpifpaf.json", ".angles.p")).name
+    )
 
-    progress_bar = IntProgress(min=0, max=len(pose_data))
-    display(progress_bar)
+    if os.path.isfile(angles_data_file):
+        [pose_angle_data, pose_angles] = pickle.load(open(angles_data_file, "rb"))
+    else:
+        pose_angles = []
+        # pose_angles_metadata = [] # This is redundant with normalized_pose_metadata...
+        # framepose_to_seqno = {} # Already computed when finding normalized poses
+        pose_seqno = 0
 
-    for i, frame in enumerate(pose_data):
-        if i % 100 == 0:
-            progress_bar.value = i
+        print("Precomputing pose angle data")
 
-        for pose in frame["predictions"]:
-            angles = compute_joint_angles(pose)
+        progress_bar = IntProgress(min=0, max=len(pose_data))
+        display(progress_bar)
 
-            pose_angles.append(angles)
+        for i, frame in enumerate(pose_data):
+            if i % 100 == 0:
+                progress_bar.value = i
 
-            pose_seqno += 1
+            for pose in frame["predictions"]:
+                angles = compute_joint_angles(pose)
 
-    # Need to rebuild an actual structure of pose angle data that parallels the
-    # structure of pose_data.
-    pose_angle_data = []
+                pose_angles.append(angles)
 
-    for frameno, frame in enumerate(pose_data):
-        frame_predictions = {"predictions": []}
+                pose_seqno += 1
 
-        if frameno in framepose_to_seqno:
-            for poseno in framepose_to_seqno[frameno]:
-                frame_predictions["predictions"].append(
-                    pose_angles[framepose_to_seqno[frameno][poseno]]
-                )
-        pose_angle_data.append(frame_predictions)
+        progress_bar.bar_style = "success"
+
+        # Need to rebuild an actual structure of pose angle data that parallels the
+        # structure of pose_data.
+        pose_angle_data = []
+
+        for frameno, frame in enumerate(pose_data):
+            frame_predictions = {"predictions": []}
+
+            if frameno in framepose_to_seqno:
+                for poseno in framepose_to_seqno[frameno]:
+                    frame_predictions["predictions"].append(
+                        pose_angles[framepose_to_seqno[frameno][poseno]]
+                    )
+            pose_angle_data.append(frame_predictions)
+
+        pickle.dump([pose_angle_data, pose_angles], open(angles_data_file, "wb"))
 
     return [pose_angle_data, pose_angles]
 
