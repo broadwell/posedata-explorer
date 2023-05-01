@@ -547,20 +547,20 @@ def build_bokeh_app(
             target_frameno = comparison_poses[0]["frameno"]
             target_poseno = comparison_poses[0]["poseno"]
 
-            # If we want to use normalized armature coordinates instead
-            # target_pose_w_confs = shift_normalize_rescale_pose_coords(
-            #     pose_data[target_frameno]["predictions"][target_poseno]
-            # )
-            # target_pose = extract_trustworthy_coords(target_pose_w_confs)
-            # target_pose_query = np.array([np.nan_to_num(target_pose, nan=-1)]).astype(
-            #     "float32"
-            # )
-
-            target_pose = pose_angle_data[target_frameno]["predictions"][target_poseno]
-
-            target_pose_query = np.array([np.nan_to_num(target_pose, nan=-999)]).astype(
+            # Using normalized armature coordinates as primary features
+            target_pose_w_confs = shift_normalize_rescale_pose_coords(
+                pose_data[target_frameno]["predictions"][target_poseno]
+            )
+            target_pose = extract_trustworthy_coords(target_pose_w_confs)
+            target_pose_query = np.array([np.nan_to_num(target_pose, nan=-1)]).astype(
                 "float32"
             )
+
+            # Using pose angles as primary features
+            # target_pose = pose_angle_data[target_frameno]["predictions"][target_poseno]
+            # target_pose_query = np.array([np.nan_to_num(target_pose, nan=-999)]).astype(
+            #     "float32"
+            # )
 
             D, I = faiss_ip_index.search(target_pose_query, SIMILAR_MATCHES_TO_FIND)
 
@@ -576,21 +576,21 @@ def build_bokeh_app(
                     match_frameno = normalized_pose_metadata[match_index]["frameno"]
                     match_poseno = normalized_pose_metadata[match_index]["poseno"]
 
-                    # If we want to use normalized armature coordinates instead
-                    # comparison_similarity = compare_poses_cosine(
-                    #     target_pose_w_confs,
-                    #     shift_normalize_rescale_pose_coords(
-                    #         pose_data[match_frameno]["predictions"][match_poseno]
-                    #     ),
-                    # )
-
-                    match_pose = pose_angle_data[match_frameno]["predictions"][
-                        match_poseno
-                    ]
-
-                    comparison_similarity = compare_poses_angles(
-                        target_pose, match_pose
+                    # Using normalized armature coordinates as primary features
+                    comparison_similarity = compare_poses_cosine(
+                        target_pose_w_confs,
+                        shift_normalize_rescale_pose_coords(
+                            pose_data[match_frameno]["predictions"][match_poseno]
+                        ),
                     )
+
+                    # Using pose angles as primary features
+                    # match_pose = pose_angle_data[match_frameno]["predictions"][
+                    #     match_poseno
+                    # ]
+                    # comparison_similarity = compare_poses_angles(
+                    #     target_pose, match_pose
+                    # )
 
                     match_similarities[match_index] = comparison_similarity
 
