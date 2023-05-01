@@ -188,7 +188,8 @@ def build_bokeh_app(
         def get_frame_info(fn):
             frame_dt = pose_series["timestamp"][fn]
             frame_tc = frame_dt.strftime("%H:%M:%S.%f")[:-4]
-            return f"{frame_tc}: {pose_series['num_poses'][fn]} detected poses, {pose_series['tracked_poses'][fn]} tracked, {pose_series['avg_coords_per_pose'][fn]:.3f} avg coords/pose, {pose_series['avg_score'][fn]:.3f} avg pose score"
+            #return f"{frame_tc}: {pose_series['num_poses'][fn]} detected poses, {pose_series['tracked_poses'][fn]} tracked, {pose_series['avg_coords_per_pose'][fn]:.3f} avg coords/pose, {pose_series['avg_score'][fn]:.3f} avg pose score"
+            return f"{frame_tc}: {pose_series['num_poses'][fn]} detected poses, {pose_series['avg_coords_per_pose'][fn]:.3f} avg coords/pose, {pose_series['avg_score'][fn]:.3f} avg pose score"
 
         info_div = Div(text=get_frame_info(0))
 
@@ -251,6 +252,9 @@ def build_bokeh_app(
             if background_switch.active:
                 rgba_bg = image_from_video_frame(video_file, new - 1)
                 pil_bg = Image.fromarray(rgba_bg)
+                #if pil_bg.height != video_height or pil_bg.width != video_width:
+                print("frameno:",new-1,pil_bg.height,pil_bg.width,"Video:",video_height,video_width)
+                print(pose_data[new - 1])
                 frame_img = draw_frame(
                     pose_data[new - 1], video_width, video_height, pil_bg
                 )
@@ -548,19 +552,18 @@ def build_bokeh_app(
             target_poseno = comparison_poses[0]["poseno"]
 
             # If we want to use normalized armature coordinates instead
-            # target_pose_w_confs = shift_normalize_rescale_pose_coords(
-            #     pose_data[target_frameno]["predictions"][target_poseno]
-            # )
-            # target_pose = extract_trustworthy_coords(target_pose_w_confs)
-            # target_pose_query = np.array([np.nan_to_num(target_pose, nan=-1)]).astype(
-            #     "float32"
-            # )
-
-            target_pose = pose_angle_data[target_frameno]["predictions"][target_poseno]
-
-            target_pose_query = np.array([np.nan_to_num(target_pose, nan=-999)]).astype(
+            target_pose_w_confs = shift_normalize_rescale_pose_coords(
+                pose_data[target_frameno]["predictions"][target_poseno]
+            )
+            target_pose = extract_trustworthy_coords(target_pose_w_confs)
+            target_pose_query = np.array([np.nan_to_num(target_pose, nan=-1)]).astype(
                 "float32"
             )
+
+            # target_pose = pose_angle_data[target_frameno]["predictions"][target_poseno]
+            # target_pose_query = np.array([np.nan_to_num(target_pose, nan=-999)]).astype(
+            #     "float32"
+            # )
 
             D, I = faiss_ip_index.search(target_pose_query, SIMILAR_MATCHES_TO_FIND)
 
@@ -577,20 +580,19 @@ def build_bokeh_app(
                     match_poseno = normalized_pose_metadata[match_index]["poseno"]
 
                     # If we want to use normalized armature coordinates instead
-                    # comparison_similarity = compare_poses_cosine(
-                    #     target_pose_w_confs,
-                    #     shift_normalize_rescale_pose_coords(
-                    #         pose_data[match_frameno]["predictions"][match_poseno]
-                    #     ),
-                    # )
-
-                    match_pose = pose_angle_data[match_frameno]["predictions"][
-                        match_poseno
-                    ]
-
-                    comparison_similarity = compare_poses_angles(
-                        target_pose, match_pose
+                    comparison_similarity = compare_poses_cosine(
+                        target_pose_w_confs,
+                        shift_normalize_rescale_pose_coords(
+                            pose_data[match_frameno]["predictions"][match_poseno]
+                        ),
                     )
+
+                    # match_pose = pose_angle_data[match_frameno]["predictions"][
+                    #     match_poseno
+                    # ]
+                    # comparison_similarity = compare_poses_angles(
+                    #     target_pose, match_pose
+                    # )
 
                     match_similarities[match_index] = comparison_similarity
 
