@@ -53,6 +53,7 @@ def preprocess_pose_json(pose_file, video_file):
     video_fps = cap.get(cv2.CAP_PROP_FPS)
     # video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     # video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    video_total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
 
     pose_data = []
@@ -113,6 +114,12 @@ def preprocess_pose_json(pose_file, video_file):
         pose_series["avg_score"].append(avg_score)
         pose_series["avg_coords_per_pose"].append(avg_coords_per_pose)
 
+    print("video frames:", video_total_frames, "posedata frames:", len(pose_data))
+    video_seconds = video_total_frames / video_fps
+    video_time = timedelta(seconds=video_seconds)
+    print(f"duration in seconds: {video_seconds}")
+    print(f"video time: {video_time}")
+    
     return [pose_data, pose_series]
 
 

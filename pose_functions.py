@@ -11,6 +11,7 @@ from pathlib import Path
 import pickle
 from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageEnhance
 from scipy.spatial.distance import cosine, correlation
+from sklearn.metrics.pairwise import nan_euclidean_distances
 import warnings
 
 import faiss
@@ -257,6 +258,10 @@ def compare_poses_correlation(p1, p2):
         np.array(unflatten_pose_data(p1))[:, :2].flatten(),
         np.array(unflatten_pose_data(p2))[:, :2].flatten(),
     )
+
+
+def compare_poses_euclidean_flattened(p1, p2):
+    return 1 - nan_eclidean_distances(p1, p2)[0]
 
 
 def compute_joint_angles(prediction):
@@ -817,6 +822,21 @@ def get_armature_prevalences(cluster_poses):
 
 
 # --- POSE TRACKING VISUALIZATION FUNCTIONS ---
+
+
+def profile_track_motion(tracking_id, pose_tracks, normalized_pose_data):
+    """
+    This assumes all coords are in the same frame of reference (no lateral motion).
+    """
+    diffs = []
+    for i, curr_track_frame in enumerate(pose_tracks[tracking_id]):
+        if i == 0:
+            diffs.append(0)
+        prev_track_frame = pose_tracks[tracking_id][i-1]
+        diff = compare_poses_euclidean_flattened(normalized_pose_data[prev_track_frame["frameno"]]["predictions"][prev_track_frame["poseno"]],
+                                                 normalized_pose_data[curr_track_frame["frameno"]]["predictions"][curr_track_frame["poseno"]])
+        diffs.append(diff)
+    return diffs
 
 
 def snapshot_pose_track(tracking_id, pose_tracks, normalized_pose_data):
