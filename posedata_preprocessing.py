@@ -1,15 +1,20 @@
-import cv2
 from datetime import datetime, timedelta
-from IPython.display import display
-from ipywidgets import IntProgress
 import json
-import jsonlines
 import math
-import numpy as np
 import os
 from pathlib import Path
+import statistics
+
+import cv2
+from IPython.display import display
+from ipywidgets import IntProgress
+import jsonlines
+import numpy as np
+from skimage.metrics import structural_similarity
 
 from yolox.tracker.byte_tracker import BYTETracker
+
+SEEK_SCORE_THRESHOLD = 0.99
 
 
 def get_available_videos(data_folder):
@@ -37,6 +42,61 @@ def get_available_videos(data_folder):
             available_videos.append(video_name.name)
 
     return available_videos
+
+
+def check_video_seekability(video_file, viz=False, frame_interval=1000):
+    """
+    Compare video frames extracted via OpenCV when reading the entire video
+    sequentially (as is done by OpenPifPaf and probably other pose estimation
+    libraries) vs seeking to a specific play point and reading a frame (which
+    is what our visualization methods do at present), sampling across the
+    entire video and averaging the results. It seems that dodgy video encoding
+    can cause these frames to differ by up to several seconds, leading to a
+    mismatch between detected poses and the background images used to visualize
+    the detections. A basic structural features comparison seems to suffice.
+    Videos with less than a 99% match rate should probably be re-encoded and
+    the pose estimation re-run on them before adding them to the posedata
+    corpus for study.
+    """
+    read_cap = cv2.VideoCapture(video_file)
+    seek_cap = cv2.VideoCapture(video_file)
+    video_length = int(seek_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    sim_frames = []
+    sim_values = []
+
+    print(
+        "Comparing sequential read and seeked frames to verify video encoding quality"
+    )
+    progress_bar = IntProgress(min=0, max=video_length)
+    display(progress_bar)
+
+    for frame_i in range(video_length):
+        ret, read_frame = read_cap.read()
+        if frame_i % frame_interval == 0:
+            progress_bar.value = frame_i
+            seek_cap.set(1, frame_i)
+            ret, seek_frame = seek_cap.read()
+
+            read_image = cv2.cvtColor(read_frame, cv2.COLOR_BGR2GRAY)
+            seek_image = cv2.cvtColor(seek_frame, cv2.COLOR_BGR2GRAY)
+
+            score, diff = structural_similarity(read_image, seek_image, full=True)
+            sim_frames.append(frame_i)
+            sim_values.append(score)
+
+    read_cap.release()
+    seek_cap.release()
+
+    if viz is True:
+        plt.plot(sim_frames, sim_values, label=f"seek/play sim")
+        plt.title(f"{video_file.split('/')[-1]}")
+        plt.ylim(0, 1.1)
+        plt.xlabel(f"sampled every {frame_interval} frames")
+        plt.legend(loc="upper left")
+        plt.show()
+
+    return statistics.mean(sim_values)
 
 
 def preprocess_pose_json(pose_file, video_file):
