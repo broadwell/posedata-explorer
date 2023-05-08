@@ -10,7 +10,7 @@ fi
 KERNEL_NAME=${KERNEL_NAME:-posedata-explorer}
 
 # install/update virtualenv as needed
-pipenv run pip install numpy
+PIPENV_VENV_IN_PROJECT=1 python -m pipenv run pip install numpy
 python -m pipenv install
 
 # install/update an ipykernel based on this virtualenv
