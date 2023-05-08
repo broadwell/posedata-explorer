@@ -1,12 +1,10 @@
-import cv2
+import lap
 import numpy as np
 import scipy
-import lap
 from scipy.spatial.distance import cdist
 
 from yolox.tracker.python_bbox import bbox_overlaps as bbox_ious
 from yolox.tracker import kalman_filter
-import time
 
 
 def merge_matches(m1, m2, shape):
