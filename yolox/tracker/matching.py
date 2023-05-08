@@ -1,6 +1,8 @@
 import lap
 import numpy as np
 import scipy
+
+# from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 
 from yolox.tracker.python_bbox import bbox_overlaps as bbox_ious
@@ -43,6 +45,9 @@ def linear_assignment(cost_matrix, thresh):
             tuple(range(cost_matrix.shape[1])),
         )
     matches, unmatched_a, unmatched_b = [], [], []
+
+    # Using the lap library -- generally has better
+    # segmentation of "tracklets"
     cost, x, y = lap.lapjv(cost_matrix, extend_cost=True, cost_limit=thresh)
     for ix, mx in enumerate(x):
         if mx >= 0:
@@ -51,6 +56,19 @@ def linear_assignment(cost_matrix, thresh):
     unmatched_b = np.where(y < 0)[0]
     matches = np.asarray(matches)
     return matches, unmatched_a, unmatched_b
+
+    # Using scipy's linear_sum_assignment --
+    # more maintainable, but produces less tunable output
+    # x, y = linear_sum_assignment(cost_matrix)
+    # for i in range(cost_matrix.shape[0]):
+    #     if i not in x:
+    #         unmatched_a.append(i)
+    # for j in range(cost_matrix.shape[1]):
+    #     if j not in y:
+    #         unmatched_b.append(j)
+    # for k in range(len(x)):
+    #     matches.append([x[k], y[k]])
+    # return np.asarray(matches), np.asarray(unmatched_a), np.asarray(unmatched_b)
 
 
 def ious(atlbrs, btlbrs):
